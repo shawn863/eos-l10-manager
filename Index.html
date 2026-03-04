@@ -1,0 +1,3257 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  EOS L10 Manager — v4.1 (Atlas Fix Pack)
+  CHANGELOG (P0-P3):
+  R0   newId/nowIso/touch/ensureMeeting/isFacilitator helpers
+  P0.1 m.dir → m.direction in scorecard section
+  P0.2 formatTime hh:mm:ss + overtime prefix
+  P0.3 meetingId / createdInMeetingId / solvedInMeetingId fields
+  P1.1 startMeeting creates explicit meetingId + activeMeeting snapshot
+  P1.2 concludeMeeting full record (ratingsByMemberId, createdTodoIds, solvedIssueIds)
+  P1.3 Facilitator gate on section nav + timer controls
+  P1.4 ⚡ Raise Issue on metric/rock/todo/headline rows
+  P1.5 Tangent Alert button → captures issue with tag
+  P1.6 Meeting Notes drawer with timestamps (per-meeting, persists to history)
+  P1.7 Prioritized Top-3 IDS workflow (facilitator-only, reorderable)
+  P1.8 Solve requires decision text OR owner+due (hard block)
+  P1.9 votesByMemberId — one vote per member (toggle off)
+  P2.1 concludeMeeting shows createdTodos + meetingNotes in history
+  P2.2 IDS section + Add button (re-uses addIssueModal)
+  P3.1 Stable sort (createdAt timestamps, not array index)
+============================================================ -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EOS L10 Meeting Manager</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;min-height:100vh;color:#212529;font-size:14px}
+
+/* ===== LOGIN ===== */
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#ff6b35 0%,#f7931e 100%)}
+.login-box{background:white;border-radius:20px;padding:50px 40px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center}
+.login-logo{font-size:42px;font-weight:900;color:#ff6b35;letter-spacing:-2px;margin-bottom:8px}
+.login-sub{font-size:13px;color:#6c757d;margin-bottom:30px}
+.login-label{text-align:left;display:block;font-weight:600;color:#495057;margin-bottom:6px;font-size:13px}
+.login-input{width:100%;padding:12px 16px;border:2px solid #e9ecef;border-radius:10px;font-size:14px;transition:border-color .2s;font-family:inherit}
+.login-input:focus{outline:none;border-color:#ff6b35}
+.login-btn{width:100%;padding:14px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:20px;transition:opacity .2s}
+.login-btn:hover{opacity:.9}
+.login-or{color:#adb5bd;font-size:13px;margin:15px 0}
+.user-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:10px}
+.user-chip{background:#fff3ee;border:2px solid #ffd5c3;color:#ff6b35;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+.user-chip:hover{background:#ff6b35;color:white;border-color:#ff6b35}
+
+/* ===== APP SHELL ===== */
+#appShell{display:none}
+.app-container{max-width:1500px;margin:0 auto;background:white;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,0.2);overflow:hidden;min-height:100vh}
+
+/* ===== HEADER ===== */
+.header{background:linear-gradient(135deg,#ff6b35 0%,#f7931e 100%);color:white;padding:20px 36px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 20px rgba(255,107,53,.25)}
+.header-left{display:flex;align-items:center;gap:14px}
+.header-logo-img{max-height:46px;max-width:140px;border-radius:6px}
+.header-title{font-size:24px;font-weight:800;letter-spacing:-0.5px}
+.header-team{font-size:13px;opacity:.85;margin-top:3px}
+.header-right{display:flex;align-items:center;gap:20px;text-align:right}
+.header-date{font-size:13px;opacity:.85}
+.header-user{display:flex;align-items:center;gap:10px;cursor:pointer;background:rgba(255,255,255,.15);padding:8px 14px;border-radius:24px;transition:background .2s}
+.header-user:hover{background:rgba(255,255,255,.25)}
+.user-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:white;flex-shrink:0}
+.header-user-name{font-size:13px;font-weight:600}
+
+/* ===== NAV ===== */
+.nav{background:#f8f9fa;display:flex;border-bottom:2px solid #e9ecef;overflow-x:auto;padding:0 10px}
+.nav-btn{padding:16px 22px;cursor:pointer;border:none;background:transparent;font-size:14px;font-weight:600;color:#6c757d;border-bottom:3px solid transparent;white-space:nowrap;transition:all .2s;font-family:inherit}
+.nav-btn:hover{color:#ff6b35;background:#fff3ee}
+.nav-btn.active{color:#ff6b35;border-bottom-color:#ff6b35;background:white}
+.nav-badge{display:inline-flex;align-items:center;justify-content:center;background:#ff6b35;color:white;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;min-width:18px}
+
+/* ===== CONTENT ===== */
+.content{padding:32px 36px}
+.section{display:none}
+.section.active{display:block}
+.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.section-title{font-size:24px;font-weight:800;color:#212529}
+.section-sub{font-size:13px;color:#6c757d;margin-top:3px}
+
+/* ===== CARDS ===== */
+.card{background:rgba(255,255,255,.95);border:1.5px solid #e2e8f0;border-radius:14px;padding:24px;transition:all .3s;backdrop-filter:blur(4px)}
+.card+.card,.panel+.panel{margin-top:20px}
+.card+div,.panel+.panel{margin-top:20px}
+.card-hover:hover{border-color:#ff6b35;box-shadow:0 8px 24px rgba(255,107,53,.12);transform:translateY(-2px)}
+.card-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6c757d;margin-bottom:12px}
+.card-value{font-size:38px;font-weight:800;color:#ff6b35;line-height:1}
+.card-desc{font-size:13px;color:#6c757d;margin-top:6px}
+
+/* ===== BADGES ===== */
+.badge{display:inline-flex;align-items:center;padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700}
+.badge-green{background:#d4edda;color:#155724}
+.badge-red{background:#f8d7da;color:#721c24}
+.badge-yellow{background:#fff3cd;color:#856404}
+.badge-blue{background:#d1ecf1;color:#0c5460}
+.badge-gray{background:#e9ecef;color:#495057}
+.badge-orange{background:#fff3ee;color:#c9400a}
+
+/* ===== BUTTONS ===== */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit;white-space:nowrap}
+.btn-primary{background:#ff6b35;color:white}
+.btn-primary:hover{background:#e85d28;transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,107,53,.3)}
+.btn-secondary{background:#f8f9fa;color:#495057;border:2px solid #e9ecef}
+.btn-secondary:hover{background:#e9ecef}
+.btn-danger{background:#dc3545;color:white}
+.btn-danger:hover{background:#c82333}
+.btn-success{background:#28a745;color:white}
+.btn-success:hover{background:#218838}
+.btn-sm{padding:6px 14px;font-size:13px}
+.btn-xs{padding:4px 10px;font-size:12px;border-radius:6px}
+.btn-ghost{background:transparent;color:#6c757d;padding:6px 10px}
+.btn-ghost:hover{background:#f8f9fa;color:#212529}
+
+/* ===== FORMS ===== */
+.form-group{margin-bottom:18px}
+.form-label{display:block;font-weight:600;color:#495057;margin-bottom:7px;font-size:13px}
+.form-control{width:100%;padding:11px 14px;border:2px solid #e9ecef;border-radius:9px;font-size:14px;font-family:inherit;transition:border-color .2s;background:white}
+.form-control:focus{outline:none;border-color:#ff6b35;box-shadow:0 0 0 3px rgba(255,107,53,.1)}
+.form-row{display:grid;gap:16px}
+.form-row-2{grid-template-columns:1fr 1fr}
+.form-row-3{grid-template-columns:1fr 1fr 1fr}
+textarea.form-control{resize:vertical;min-height:80px}
+select.form-control{cursor:pointer}
+
+/* ===== TABLES ===== */
+.data-table{width:100%;border-collapse:collapse;margin-top:16px}
+.data-table th{background:#f8f9fa;padding:13px 16px;text-align:left;font-weight:700;color:#495057;border-bottom:2px solid #dee2e6;font-size:13px}
+.data-table td{padding:13px 16px;border-bottom:1px solid #e9ecef;font-size:14px;vertical-align:middle}
+.data-table tbody tr:hover{background:#fffaf8}
+.data-table tbody tr:last-child td{border-bottom:none}
+
+/* ===== DASHBOARD ===== */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:24px}
+.kpi-grid .card{display:grid;grid-template-rows:auto auto auto 28px}
+.kpi-badge-slot{display:flex;align-items:flex-end;padding-top:8px;min-height:28px}
+.agenda-list{list-style:none}
+.agenda-item{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#f8f9fa;border-radius:9px;margin-bottom:10px;border-left:4px solid #dee2e6;transition:all .2s}
+.agenda-item.current{background:linear-gradient(90deg,rgba(255,107,53,.08),rgba(247,147,30,.05));border-left-color:#ff6b35;font-weight:600}
+.agenda-item.done{border-left-color:#28a745;opacity:.6}
+.agenda-name{font-size:15px;color:#495057}
+.agenda-time{font-size:13px;color:#6c757d;font-weight:600}
+
+/* ===== MEETING LAYOUT ===== */
+.meeting-shell{display:grid;grid-template-columns:260px 1fr;gap:0;background:#f0f2f5;border-radius:16px;overflow:hidden;min-height:600px;margin-bottom:24px;border:2px solid #e2e8f0;box-shadow:0 8px 32px rgba(0,0,0,.08)}
+.meeting-sidebar{background:linear-gradient(180deg,#f8fafc 0%,#f1f5f9 100%);color:#212529;padding:20px 0;display:flex;flex-direction:column;border-right:2px solid #e2e8f0}
+.meeting-sidebar-top{padding:0 18px 16px;border-bottom:1px solid #e2e8f0;margin-bottom:12px}
+
+/* Circular Arc Timer */
+.arc-timer-wrap{position:relative;width:110px;height:110px;margin:0 auto 10px}
+.arc-timer-svg{transform:rotate(-90deg)}
+.arc-bg{fill:none;stroke:#e2e8f0;stroke-width:6}
+.arc-fill{fill:none;stroke:#ff6b35;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .8s linear,stroke .3s}
+.arc-fill.warning{stroke:#f59e0b}
+.arc-fill.overrun{stroke:#ef4444}
+.arc-timer-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.arc-elapsed{font-size:18px;font-weight:800;font-family:'Courier New',monospace;color:#212529;line-height:1;display:block}
+.arc-total{font-size:9px;color:#94a3b8;display:block;margin-top:2px}
+
+.sidebar-status{font-size:11px;color:#94a3b8;text-align:center;letter-spacing:.5px;font-weight:700;text-transform:uppercase;margin-bottom:6px}
+.sidebar-start-btn{width:100%;padding:10px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:white;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;margin-top:6px;box-shadow:0 2px 8px rgba(255,107,53,.3)}
+.sidebar-start-btn:hover{opacity:.9;transform:translateY(-1px)}
+.sidebar-start-btn.running{background:#64748b;box-shadow:none}
+
+/* Agenda items in sidebar */
+.sidebar-agenda{list-style:none;flex:1;overflow-y:auto;padding:0 10px}
+.sag-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;cursor:pointer;transition:all .15s;margin-bottom:2px;color:#64748b;font-size:14px;font-weight:500;border:2px solid transparent}
+.sag-item:hover{background:rgba(255,107,53,.06);color:#ff6b35}
+.sag-item.active{background:rgba(255,107,53,.1);color:#c9400a;border-color:rgba(255,107,53,.25);font-weight:700}
+.sag-item.done{color:#94a3b8}
+.sag-item.done .sag-name::after{content:' ✓';color:#22c55e;font-size:12px}
+.sag-dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .3s}
+.sag-dot.green{background:#22c55e}
+.sag-dot.yellow{background:#f59e0b}
+.sag-dot.red{background:#ef4444}
+.sag-name{flex:1;font-size:14px}
+.sag-time{font-size:11px;color:#94a3b8;flex-shrink:0;font-weight:600}
+
+/* Right content panel */
+.meeting-content{background:white;padding:0;display:flex;flex-direction:column}
+.meeting-content-header{padding:20px 28px 18px;border-bottom:2px solid #f0f2f5;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;background:rgba(255,255,255,.9);backdrop-filter:blur(8px)}
+.meeting-content-title{font-size:20px;font-weight:800;color:#212529}
+.meeting-content-body{padding:28px;flex:1;overflow-y:auto}
+
+/* Facilitator / Scribe bar */
+.roles-bar{background:#f8f9fa;border:2px solid #e9ecef;border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:20px;margin-bottom:20px;flex-wrap:wrap}
+.role-label{font-size:12px;font-weight:700;color:#6c757d;text-transform:uppercase;letter-spacing:.5px;margin-right:4px}
+.role-select{padding:7px 12px;border:1.5px solid #dee2e6;border-radius:8px;font-size:13px;font-weight:600;background:white;cursor:pointer;font-family:inherit;color:#212529}
+.role-select:focus{outline:none;border-color:#ff6b35}
+.role-divider{width:1px;height:28px;background:#dee2e6}
+
+/* Section info card */
+.section-info-card{background:#f8f9fa;border-radius:12px;padding:20px 22px;margin-bottom:20px;display:flex;gap:16px;align-items:flex-start;border:2px solid #e9ecef}
+.section-info-icon{font-size:28px;flex-shrink:0}
+.section-info-title{font-size:16px;font-weight:700;color:#212529;margin-bottom:4px}
+.section-info-desc{font-size:13px;color:#6c757d;line-height:1.6}
+
+/* Conclude panel */
+.conclude-bar{padding:16px 28px;background:#f8f9fa;border-top:2px solid #e9ecef;display:flex;gap:16px;align-items:center;flex-shrink:0}
+
+/* Meeting notes compact */
+.meeting-notes-wrap{position:relative}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.arc-fill.overrun{animation:pulse-stroke .5s infinite}
+@keyframes pulse-stroke{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ===== ROCKS ===== */
+.rock-card{background:white;border:2px solid #e9ecef;border-radius:14px;padding:20px;margin-bottom:14px;transition:all .2s}
+.rock-card:hover{border-color:#ddd;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+.rock-card.on-track{border-left:5px solid #28a745}
+.rock-card.off-track{border-left:5px solid #dc3545}
+.rock-card.complete{border-left:5px solid #6c757d;opacity:.7}
+.rock-title-text{font-size:16px;font-weight:700;color:#212529}
+.rock-owner-text{font-size:13px;color:#6c757d;margin-top:3px}
+.progress-bar{height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;margin-top:10px}
+.progress-fill{height:100%;background:linear-gradient(90deg,#ff6b35,#f7931e);transition:width .5s}
+
+/* ===== ISSUES ===== */
+.issue-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f8f9fa;border-radius:10px;margin-bottom:10px;border-left:4px solid #dee2e6;transition:all .2s}
+.issue-card:hover{background:#fff3ee;border-left-color:#ff6b35}
+.issue-card.solved{opacity:.5;border-left-color:#28a745}
+.issue-priority{width:28px;height:28px;background:#ff6b35;color:white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;cursor:grab}
+.issue-text{flex:1;font-size:14px;color:#495057}
+.issue-who{font-size:12px;color:#6c757d;background:white;padding:3px 10px;border-radius:10px;border:1px solid #dee2e6}
+
+/* ===== TODOS ===== */
+.todo-row td{transition:opacity .3s}
+.todo-row.done td{opacity:.5;text-decoration:line-through}
+.todo-row.overdue .due-date{color:#dc3545;font-weight:700}
+
+/* ===== SCORECARD ===== */
+.scorecard-wrap{overflow-x:auto;margin-top:16px}
+.scorecard-tbl{border-collapse:collapse;min-width:1100px;width:100%}
+.scorecard-tbl th,.scorecard-tbl td{padding:11px 14px;border:1px solid #e9ecef;text-align:center;white-space:nowrap}
+.scorecard-tbl th{background:#f8f9fa;font-weight:700;color:#495057;position:sticky;top:0;z-index:10;font-size:13px}
+.scorecard-tbl .col-name{text-align:left;min-width:220px;font-weight:700;color:#212529}
+.scorecard-tbl .col-who{min-width:110px}
+.scorecard-tbl .col-goal{min-width:90px;font-weight:700}
+.scorecard-tbl .col-week{min-width:75px}
+.scorecard-tbl .col-status{min-width:100px;position:sticky;right:0;background:#f8f9fa;z-index:5}
+.scorecard-tbl td.col-status{background:white}
+.scorecard-tbl .week-current{background:rgba(255,107,53,.07)}
+.scorecard-tbl .cell-green{background:#d4edda!important}
+.scorecard-tbl .cell-red{background:#f8d7da!important}
+/* Fix 1: sticky left columns */
+.scorecard-tbl th.s-col,.scorecard-tbl td.s-col{position:sticky;z-index:6;background:#fff}
+.scorecard-tbl th.s-col{background:#f8f9fa;z-index:8}
+.scorecard-tbl .s-name{left:0;min-width:220px;text-align:left}
+.scorecard-tbl .s-who{left:220px;min-width:110px}
+.scorecard-tbl .s-goal{left:330px;min-width:90px}
+.scorecard-tbl .s-dir{left:420px;min-width:70px;box-shadow:4px 0 8px rgba(0,0,0,.06)}
+.scorecard-tbl th.s-dir{box-shadow:4px 0 8px rgba(0,0,0,.06)}
+.score-input{width:70px;padding:6px;border:1.5px solid #e9ecef;border-radius:6px;text-align:center;font-size:13px;font-family:inherit;background:#f8f9fa}
+.score-input:focus{outline:none;border-color:#ff6b35;background:white}
+
+/* ===== HEADLINES ===== */
+.headline-item{display:flex;align-items:center;gap:14px;padding:13px 16px;background:#f8f9fa;border-radius:10px;margin-bottom:10px}
+.headline-icon{font-size:22px;flex-shrink:0}
+.headline-text{flex:1}
+.headline-date{font-size:12px;color:#6c757d;margin-bottom:2px}
+.headline-msg{font-size:14px;color:#212529}
+.headline-author{font-size:12px;color:#adb5bd;margin-top:2px}
+
+/* ===== HISTORY ===== */
+.history-card{background:#f8f9fa;border-radius:12px;padding:20px;margin-bottom:14px;cursor:pointer;transition:all .2s;border:2px solid transparent}
+.history-card:hover{background:#fff3ee;border-color:#ffd5c3}
+.history-rating{font-size:22px;font-weight:800;color:#ff6b35}
+.history-meta{font-size:13px;color:#6c757d}
+.history-detail{display:none;margin-top:14px;padding-top:14px;border-top:1px solid #dee2e6}
+.history-card.open .history-detail{display:block}
+
+/* ===== MODAL ===== */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:white;border-radius:18px;padding:32px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.modal-title{font-size:20px;font-weight:800;color:#212529;margin-bottom:4px}
+.modal-sub{font-size:13px;color:#6c757d;margin-bottom:24px}
+.modal-actions{display:flex;gap:12px;justify-content:flex-end;margin-top:24px}
+.modal-close{float:right;background:none;border:none;font-size:22px;cursor:pointer;color:#6c757d;line-height:1;margin-top:-4px}
+.modal-close:hover{color:#212529}
+
+/* ===== SETTINGS ===== */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:768px){.settings-grid,.kpi-grid{grid-template-columns:1fr 1fr}.kpi-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:500px){.settings-grid,.kpi-grid{grid-template-columns:1fr}}
+.logo-drop{border:3px dashed #dee2e6;border-radius:12px;padding:36px;text-align:center;cursor:pointer;transition:all .2s}
+.logo-drop:hover{border-color:#ff6b35;background:#fff3ee}
+
+/* Fix6: info popup */
+.info-popup{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;display:flex;align-items:center;justify-content:center}
+.info-popup-box{background:#fff;border-radius:16px;padding:28px 32px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative}
+.info-popup-title{font-size:17px;font-weight:800;color:#212529;margin-bottom:14px}
+.info-popup-list{list-style:none;padding:0;margin:0}
+.info-popup-list li{padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:14px;color:#495057;line-height:1.5}
+.info-popup-list li:last-child{border-bottom:none}
+.info-popup-close{position:absolute;top:14px;right:18px;background:none;border:none;font-size:22px;cursor:pointer;color:#adb5bd;line-height:1}
+.info-popup-close:hover{color:#495057}
+.info-btn{background:none;border:none;cursor:pointer;font-size:14px;color:#94a3b8;padding:0 2px;line-height:1;vertical-align:middle}
+.info-btn:hover{color:#ff6b35}
+/* ===== TOAST ===== */
+.toast{position:fixed;bottom:24px;right:24px;background:#212529;color:white;padding:14px 22px;border-radius:10px;font-size:14px;font-weight:600;z-index:9999;transform:translateY(100px);opacity:0;transition:all .35s;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.success{background:#28a745}
+.toast.warning{background:#ffc107;color:#212529}
+
+/* ===== IDS PANEL ===== */
+.ids-section{background:#fff8f5;color:#212529;border-radius:14px;padding:28px;margin-bottom:20px;border:2px solid #ffd5c3}
+.ids-title{font-size:20px;font-weight:800;margin-bottom:6px}
+.ids-step{display:flex;gap:10px;margin-bottom:10px;align-items:flex-start}
+.ids-step-num{width:24px;height:24px;background:#ff6b35;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:2px}
+.ids-step-text{font-size:14px;opacity:.85}
+
+/* ===== VOTE BUTTONS ===== */
+.vote-block{display:flex;align-items:center;gap:4px;flex-shrink:0;background:#f8f9fa;border-radius:10px;padding:4px 8px;border:1.5px solid #e9ecef}
+.vote-count{font-size:18px;font-weight:800;color:#212529;min-width:24px;text-align:center;line-height:1}
+.vote-btn{width:26px;height:26px;border:none;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;line-height:1}
+.vote-btn-plus{background:#ff6b35;color:white}
+.vote-btn-plus:hover{background:#e85d28;transform:scale(1.1)}
+.vote-btn-minus{background:#e9ecef;color:#495057}
+.vote-btn-minus:hover{background:#dee2e6}
+.vote-top{border-color:#ff6b35;background:#fff3ee}
+.vote-top .vote-count{color:#ff6b35}
+
+/* ===== IDS DISCUSSION PANEL ===== */
+.ids-panel{background:#fff8f5;border-radius:14px;padding:24px;margin-bottom:12px;color:#212529;border:2px solid #ffd5c3}
+.ids-panel-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6c757d;margin-bottom:6px}
+.ids-panel-issue{font-size:16px;font-weight:700;margin-bottom:16px;line-height:1.4;color:#c9400a}
+.ids-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ids-field label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6c757d;margin-bottom:5px}
+.ids-field input,.ids-field textarea,.ids-field select{width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;background:#fff;color:#212529;font-size:13px;font-family:inherit}
+.ids-field input::placeholder,.ids-field textarea::placeholder{color:rgba(255,255,255,.35)}
+.ids-field input:focus,.ids-field textarea:focus{outline:none;border-color:#ff6b35;background:rgba(255,255,255,.12)}
+.ids-field textarea{min-height:60px;resize:vertical}
+.ids-badge-discussing{display:inline-flex;align-items:center;gap:6px;background:#ff6b35;color:white;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;margin-bottom:10px;letter-spacing:.5px}
+.issue-card.discussing{border-left:4px solid #ff6b35;background:linear-gradient(90deg,rgba(255,107,53,.06),transparent)}
+
+/* ===== MISC ===== */
+.divider{height:1px;background:#e9ecef;margin:20px 0}
+.empty-state{text-align:center;padding:48px 20px;color:#6c757d}
+.empty-state-icon{font-size:48px;margin-bottom:12px;opacity:.4}
+.empty-state-msg{font-size:16px;font-weight:600;margin-bottom:6px;color:#adb5bd}
+.empty-state-sub{font-size:13px}
+.tag{display:inline-block;background:#e9ecef;color:#495057;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600;margin:2px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:stretch}
+.two-col.equal-height{align-items:stretch}
+.two-col>.card{height:100%}
+.dash-right-col{display:flex;flex-direction:column;gap:18px}
+.dash-right-col .dash-right-card{margin-top:0!important}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+.pull-right{float:right}
+.flex-row{display:flex;align-items:center;gap:12px}
+.flex-between{display:flex;justify-content:space-between;align-items:center}
+.avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:white;flex-shrink:0}
+.scroll-hint{font-size:12px;color:#adb5bd;margin-bottom:8px}
+.note-box{background:#fff3ee;border:1px solid #ffd5c3;border-radius:8px;padding:14px;font-size:13px;color:#7a3a1a}
+.check-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.check-row input[type=checkbox]{width:18px;height:18px;cursor:pointer;accent-color:#ff6b35}
+</style>
+</head>
+<body>
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">L10</div>
+    <div style="font-size:22px;font-weight:800;color:#212529;margin-bottom:4px">EOS Meeting Manager</div>
+    <div class="login-sub">Sign in or choose your name to continue</div>
+    <div class="form-group">
+      <label class="login-label">Your Name</label>
+      <input id="loginName" class="login-input" placeholder="Enter your name..." autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label class="login-label">Team / Department</label>
+      <select id="loginTeam" class="login-input">
+        <option value="">— Select your L10 team —</option>
+      </select>
+    </div>
+    <button class="login-btn" onclick="doLogin()">Enter Meeting Room →</button>
+    <div class="login-or">— or pick a saved user —</div>
+    <div class="user-chips" id="savedUserChips"></div>
+    <div style="margin-top:20px;font-size:12px;color:#adb5bd">
+      <a href="#" onclick="showNewTeamSetup();return false" style="color:#ff6b35;font-weight:600;text-decoration:none">+ Create New Team / Department</a>
+    </div>
+  </div>
+</div>
+
+<!-- ===== APP SHELL ===== -->
+<div id="appShell">
+<div class="app-container">
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <img id="headerLogo" style="display:none;max-height:46px;max-width:140px;border-radius:6px">
+    <div>
+      <div class="header-title">EOS L10 Meeting Manager</div>
+      <div class="header-team" id="headerTeamLabel">Leadership Team</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div style="text-align:right">
+      <div class="header-date" id="headerDate"></div>
+      <div id="headerMeetingNext" style="font-size:12px;opacity:.75"></div>
+    </div>
+    <div class="header-user" onclick="doLogout()">
+      <div class="user-avatar" id="headerAvatar" style="background:#ff6b35">?</div>
+      <div class="header-user-name" id="headerUserName">User</div>
+      <span style="font-size:11px;opacity:.6">▾</span>
+    </div>
+  </div>
+</div>
+
+<!-- NAV -->
+<div class="nav">
+  <button class="nav-btn active" onclick="showPage('dashboard',this)">📊 Dashboard</button>
+  <button class="nav-btn" onclick="showPage('meeting',this)">🏃 L10 Meeting</button>
+  <button class="nav-btn" onclick="showPage('scorecard',this)">📈 Scorecard</button>
+  <button class="nav-btn" onclick="showPage('rocks',this)">💎 Rocks</button>
+  <button class="nav-btn" onclick="showPage('issues',this)">⚡ Issues <span id="issuesBadge" class="nav-badge" style="display:none">0</span></button>
+  <button class="nav-btn" onclick="showPage('todos',this)">✅ To-Dos <span id="todosBadge" class="nav-badge" style="display:none">0</span></button>
+  <button class="nav-btn" onclick="showPage('headlines',this)">📢 Headlines</button>
+  <button class="nav-btn" onclick="showPage('history',this)">📋 History</button>
+  <button class="nav-btn" onclick="showPage('settings',this)">⚙️ Settings</button>
+</div>
+
+<div class="content">
+
+<!-- ===== DASHBOARD ===== -->
+<div id="dashboard" class="section active">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Dashboard</div>
+      <div class="section-sub" id="dashQuarterLabel">Q4 2025 • Week of Oct 1</div>
+    </div>
+    <button class="btn btn-primary" onclick="showPage('meeting',document.querySelectorAll('.nav-btn')[1])">▶ Start L10 Meeting</button>
+  </div>
+  <div class="kpi-grid">
+    <div class="card card-hover" onclick="showPage('scorecard',document.querySelectorAll('.nav-btn')[2])" style="cursor:pointer">
+      <div class="card-title">Scorecard</div>
+      <div class="card-value" id="kpiScorecard">—</div>
+      <div class="card-desc">metrics on track</div>
+      <div id="kpiScorecardBadge" class="kpi-badge-slot"></div>
+    </div>
+    <div class="card card-hover" onclick="showPage('rocks',document.querySelectorAll('.nav-btn')[3])" style="cursor:pointer">
+      <div class="card-title">Quarterly Rocks</div>
+      <div class="card-value" id="kpiRocks">—</div>
+      <div class="card-desc">on track this quarter</div>
+      <div id="kpiRocksBadge" class="kpi-badge-slot"></div>
+    </div>
+    <div class="card card-hover" onclick="showPage('issues',document.querySelectorAll('.nav-btn')[4])" style="cursor:pointer">
+      <div class="card-title">Open Issues</div>
+      <div class="card-value" id="kpiIssues">—</div>
+      <div class="card-desc">requiring discussion</div>
+      <div id="kpiIssuesBadge" class="kpi-badge-slot"></div>
+    </div>
+    <div class="card card-hover" onclick="showPage('todos',document.querySelectorAll('.nav-btn')[5])" style="cursor:pointer">
+      <div class="card-title">To-Dos</div>
+      <div class="card-value" id="kpiTodos">—</div>
+      <div class="card-desc">open action items</div>
+      <div id="kpiTodosBadge" class="kpi-badge-slot"></div>
+    </div>
+  </div>
+  <div class="two-col">
+    <div class="card" style="height:100%">
+      <div class="card-title">L10 Meeting Agenda (90 min)</div>
+      <ul class="agenda-list" id="dashAgenda"></ul>
+    </div>
+    <div class="dash-right-col">
+      <div class="card dash-right-card">
+        <div class="card-title">To-Do Completion Rate (13 wks)</div>
+        <div class="card-value" id="todoCompRate">—</div>
+        <div class="card-desc">completed on time</div>
+        <div class="progress-bar" style="margin-top:12px">
+          <div class="progress-fill" id="todoCompBar" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="card dash-right-card" style="flex:1">
+        <div class="card-title">Recent Activity</div>
+        <div id="recentActivity" style="font-size:13px;color:#6c757d;line-height:1.8">Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MEETING ===== -->
+<div id="meeting" class="section">
+
+  <!-- Top bar: date + conclude -->
+  <div class="section-header" style="margin-bottom:16px">
+    <div>
+      <div class="section-title">L10 Meeting</div>
+      <div class="section-sub" id="meetingDateLabel">Not started</div>
+    </div>
+    <div class="flex-row">
+      <button class="btn btn-danger btn-sm" onclick="concludeMeeting()" id="concludeBtn" style="display:none">🏁 Conclude & Save</button>
+    </div>
+  </div>
+
+  <!-- Main two-panel shell -->
+  <div class="meeting-shell">
+
+    <!-- LEFT SIDEBAR -->
+    <div class="meeting-sidebar">
+      <div class="meeting-sidebar-top">
+        <!-- Circular arc timer -->
+        <div class="arc-timer-wrap">
+          <svg class="arc-timer-svg" width="110" height="110" viewBox="0 0 110 110">
+            <circle class="arc-bg" cx="55" cy="55" r="48"/>
+            <circle class="arc-fill" id="arcFill" cx="55" cy="55" r="48"
+              stroke-dasharray="301.59" stroke-dashoffset="0"/>
+          </svg>
+          <div class="arc-timer-text">
+            <span class="arc-elapsed" id="arcElapsed">00:00</span>
+            <span class="arc-total" id="arcTotal">/ 01:30:00</span>
+          </div>
+        </div>
+        <div class="sidebar-status" id="sidebarStatus">READY</div>
+        <button class="sidebar-start-btn" id="sidebarStartBtn" onclick="timerStart()">▶ Start meeting</button>
+      </div>
+
+      <!-- Agenda list -->
+      <ul class="sidebar-agenda" id="sidebarAgenda"></ul>
+    </div>
+
+    <!-- RIGHT CONTENT PANEL -->
+    <div class="meeting-content">
+      <div class="meeting-content-header">
+        <div class="meeting-content-title" id="contentSectionTitle">Segue</div>
+        <div class="flex-row">
+          <div style="font-size:12px;color:#6c757d;font-weight:600" id="contentSectionTime">5 min</div>
+          <button class="btn btn-secondary btn-sm" id="btnPause" onclick="timerPause()" style="display:none">⏸ Pause</button>
+          <span style="display:inline-flex;align-items:center;gap:4px">
+            <button class="btn btn-sm" style="background:#fff3cd;color:#92400e;border:1.5px solid #fbbf24;font-weight:700" onclick="tangentAlert()">⚡ Tangent</button>
+            <button class="info-btn" onclick="showInfoPopup('tangent')" title="What is a tangent?">ℹ️</button>
+          </span>
+          <button class="btn btn-primary btn-sm" onclick="timerNextSection()">Next Section →</button>
+        </div>
+      </div>
+
+      <!-- Roles bar: Facilitator + Scribe -->
+      <div style="padding:16px 28px 0">
+        <div class="roles-bar">
+          <span class="role-label">Facilitator:</span>
+          <select id="facilitatorSelect" class="role-select" onchange="saveMeetingRoles()">
+            <option value="">— Select —</option>
+          </select>
+          <div class="role-divider"></div>
+          <span class="role-label">Scribe:</span>
+          <select id="scribeSelect" class="role-select" onchange="saveMeetingRoles()">
+            <option value="">— Select —</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="meeting-content-body" id="meetingContentBody">
+        <!-- Populated by renderMeetingContent() -->
+      </div>
+
+      <!-- P1.6: Meeting Notes drawer -->
+      <div style="padding:0 28px 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="card-title" style="margin:0">📝 Notes (Scribe)</div>
+          <button class="btn btn-xs btn-secondary" onclick="addMeetingNote()" style="font-size:11px">+ Save Note</button>
+        </div>
+        <div id="meetingNotesList" style="max-height:110px;overflow-y:auto;margin-bottom:8px"></div>
+        <textarea id="meetingNotes" class="form-control" rows="2" placeholder="Type note → click Save Note to log it with timestamp..."></textarea>
+      </div>
+
+      <!-- Conclude footer — shown only during Conclude section -->
+      <div class="conclude-bar" id="concludeBar" style="display:none">
+        <div style="flex:1">
+          <label style="font-size:13px;font-weight:700;color:#495057;margin-right:10px">Rate this meeting:</label>
+          <input type="range" id="meetingRating" min="1" max="10" value="8" style="width:120px;accent-color:#ff6b35" oninput="document.getElementById('meetingRatingVal').textContent=this.value">
+          <span id="meetingRatingVal" style="font-size:20px;font-weight:800;color:#ff6b35;margin-left:10px">8</span><span style="font-size:13px;color:#6c757d">/10</span>
+        </div>
+        <input id="meetingRecap" class="form-control" style="flex:2;margin:0" placeholder="One-sentence recap / cascade message...">
+        <button class="btn btn-primary" onclick="concludeMeeting()">🏁 Save to History</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden IDS elements still needed by meeting section -->
+  <div id="meetingIssuesList" style="display:none"></div>
+  <div id="meetingTodosList" style="display:none"></div>
+</div>
+
+<!-- ===== SCORECARD ===== -->
+<div id="scorecard" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Weekly Scorecard</div>
+      <div class="section-sub" id="scorecardQuarterLabel">Q4 2025 • 13-week tracking</div>
+    </div>
+    <div class="flex-row">
+      <select id="scorecardWeekSelect" class="form-control" style="width:140px" onchange="renderScorecard()">
+        <option value="1">Week 1</option><option value="2">Week 2</option><option value="3">Week 3</option>
+        <option value="4">Week 4</option><option value="5">Week 5</option><option value="6">Week 6</option>
+        <option value="7">Week 7</option><option value="8">Week 8</option><option value="9">Week 9</option>
+        <option value="10">Week 10</option><option value="11">Week 11</option><option value="12">Week 12</option>
+        <option value="13" selected>Week 13</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="showAddMetricModal()">+ Add Metric</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="scroll-hint">← Scroll horizontally to see all 13 weeks →</div>
+    <div class="scorecard-wrap">
+      <table class="scorecard-tbl" id="scorecardTable">
+        <thead>
+          <tr>
+            <th class="col-name s-col s-name">Measurable</th>
+            <th class="col-who s-col s-who">Owner</th>
+            <th class="col-goal s-col s-goal">Goal</th>
+            <th class="col-goal s-col s-dir" style="min-width:70px">↑/↓</th>
+            <th class="col-week" id="wkh1">Wk 1</th><th class="col-week" id="wkh2">Wk 2</th><th class="col-week" id="wkh3">Wk 3</th>
+            <th class="col-week" id="wkh4">Wk 4</th><th class="col-week" id="wkh5">Wk 5</th><th class="col-week" id="wkh6">Wk 6</th>
+            <th class="col-week" id="wkh7">Wk 7</th><th class="col-week" id="wkh8">Wk 8</th><th class="col-week" id="wkh9">Wk 9</th>
+            <th class="col-week" id="wkh10">Wk 10</th><th class="col-week" id="wkh11">Wk 11</th><th class="col-week" id="wkh12">Wk 12</th>
+            <th class="col-week" id="wkh13">Wk 13</th>
+            <th class="col-status">Status</th>
+            <th style="min-width:60px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="scorecardBody"></tbody>
+      </table>
+    </div>
+    <div id="scorecardEmpty" class="empty-state" style="display:none">
+      <div class="empty-state-icon">📈</div>
+      <div class="empty-state-msg">No metrics yet</div>
+      <div class="empty-state-sub">Click "+ Add Metric" to track your first measurable</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ROCKS ===== -->
+<div id="rocks" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Quarterly Rocks</div>
+      <div class="section-sub" id="rocksQuarterLabel">Q4 2025 • Due Dec 31</div>
+    </div>
+    <div class="flex-row">
+      <select id="rocksFilterOwner" class="form-control" style="width:160px" onchange="renderRocks()">
+        <option value="">All Owners</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="showAddRockModal()">+ Add Rock</button>
+    </div>
+  </div>
+  <div id="rocksList"></div>
+  <div id="rocksEmpty" class="empty-state" style="display:none">
+    <div class="empty-state-icon">💎</div>
+    <div class="empty-state-msg">No rocks this quarter</div>
+    <div class="empty-state-sub">Add your quarterly priorities to get started</div>
+  </div>
+</div>
+
+<!-- ===== ISSUES ===== -->
+<div id="issues" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Issues List <button class="info-btn" onclick="showInfoPopup('raiseissue')" title="What is Raise Issue?">ℹ️</button></div>
+      <div class="section-sub">Prioritize, then IDS during the L10 meeting</div>
+    </div>
+    <div class="flex-row">
+      <button class="btn btn-secondary btn-sm" onclick="toggleShowSolved()">👁 Show Solved</button>
+      <button class="btn btn-primary btn-sm" onclick="showModal('addIssueModal')">+ Add Issue</button>
+    </div>
+  </div>
+  <div class="note-box" style="margin-bottom:16px">
+    <strong>💡 How to use Issues:</strong> Add issues throughout the week. Before the meeting, everyone votes on the most important ones — highest votes go first. During IDS, click <strong>▶ Discuss</strong> to open the Who/What/When panel, then <strong>✓ Solve</strong> when resolved.
+  </div>
+  <div id="idsPanel" style="display:none"></div>
+  <div id="issuesList"></div>
+  <div id="issuesEmpty" class="empty-state" style="display:none">
+    <div class="empty-state-icon">⚡</div>
+    <div class="empty-state-msg">No open issues</div>
+    <div class="empty-state-sub">Great work! Add issues as they come up during the week.</div>
+  </div>
+</div>
+
+<!-- ===== TO-DOS ===== -->
+<div id="todos" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">To-Do List</div>
+      <div class="section-sub">7-day action items — every to-do needs an owner and due date</div>
+    </div>
+    <div class="flex-row">
+      <select id="todosFilterOwner" class="form-control" style="width:160px" onchange="renderTodos()">
+        <option value="">All Owners</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" onclick="toggleDoneTodos()">👁 Show Done</button>
+      <button class="btn btn-primary btn-sm" onclick="showAddTodoModal(false)">+ Add To-Do</button>
+    </div>
+  </div>
+  <div class="card" style="padding:0">
+    <table class="data-table" id="todosTable">
+      <thead>
+        <tr>
+          <th style="width:44px">Done</th>
+          <th>Task</th>
+          <th>Owner</th>
+          <th>Due Date</th>
+          <th>From Meeting</th>
+          <th>Status</th>
+          <th style="width:90px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="todosBody"></tbody>
+    </table>
+    <div id="todosEmpty" class="empty-state">
+      <div class="empty-state-icon">✅</div>
+      <div class="empty-state-msg">No to-dos</div>
+      <div class="empty-state-sub">Action items created during the meeting appear here.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== HEADLINES ===== -->
+<div id="headlines" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Headlines</div>
+      <div class="section-sub">Customer & employee news shared at the start of each L10</div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="showModal('addHeadlineModal')">+ Add Headline</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div class="card" style="display:flex;flex-direction:column;min-height:220px">
+      <div class="card-title">🤝 Customer Headlines</div>
+      <div id="customerHeadlines"></div>
+      <div id="customerHeadlinesEmpty" style="display:none;flex:1;display:flex;align-items:center;justify-content:center;padding:24px">
+        <div class="empty-state-sub">No customer headlines yet</div>
+      </div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;min-height:220px">
+      <div class="card-title">👥 Employee Headlines</div>
+      <div id="employeeHeadlines"></div>
+      <div id="employeeHeadlinesEmpty" style="display:none;flex:1;display:flex;align-items:center;justify-content:center;padding:24px">
+        <div class="empty-state-sub">No employee headlines yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== HISTORY ===== -->
+<div id="history" class="section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Meeting History</div>
+      <div class="section-sub">Past L10 meetings — click to expand details</div>
+    </div>
+    <div class="flex-row">
+      <input type="date" id="historyFrom" class="form-control" style="width:160px" onchange="renderHistory()">
+      <input type="date" id="historyTo" class="form-control" style="width:160px" onchange="renderHistory()">
+      <button class="btn btn-secondary btn-sm" onclick="exportHistory()">⬇ Export CSV</button>
+    </div>
+  </div>
+  <div id="historyStats" class="three-col" style="margin-bottom:20px"></div>
+  <div id="historyList"></div>
+  <div id="historyEmpty" class="empty-state">
+    <div class="empty-state-icon">📋</div>
+    <div class="empty-state-msg">No meeting history yet</div>
+    <div class="empty-state-sub">Run your first L10 meeting and conclude it to see history here.</div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS ===== -->
+<div id="settings" class="section">
+  <div class="section-header">
+    <div class="section-title">Settings</div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-title">🏢 Company & Team</div>
+    <div class="settings-grid">
+      <div class="form-group">
+        <label class="form-label">Company Name</label>
+        <input id="settingCompany" class="form-control" placeholder="Acme Corp">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Team Name</label>
+        <input id="settingTeam" class="form-control" placeholder="Leadership Team">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Company Logo</label>
+      <div class="logo-drop" onclick="document.getElementById('logoFileInput').click()">
+        <div style="font-size:36px;margin-bottom:8px">📁</div>
+        <div style="font-weight:600;color:#495057">Click to upload logo</div>
+        <div style="font-size:12px;color:#adb5bd">PNG or JPG, max 500KB</div>
+        <img id="logoPreview" style="max-height:60px;max-width:200px;margin-top:12px;display:none;border-radius:6px">
+      </div>
+      <input type="file" id="logoFileInput" accept="image/*" style="display:none" onchange="handleLogoUpload(event)">
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-title">📅 Meeting Schedule</div>
+    <div class="settings-grid">
+      <div class="form-group">
+        <label class="form-label">Meeting Day</label>
+        <select id="settingDay" class="form-control">
+          <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+          <option>Thursday</option><option>Friday</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Meeting Time</label>
+        <input type="time" id="settingTime" class="form-control" value="09:00">
+      </div>
+    </div>
+    <div class="settings-grid">
+      <div class="form-group">
+        <label class="form-label">Current Quarter</label>
+        <select id="settingQuarter" class="form-control">
+          <option value="Q1-2026">Q1 2026 (Jan–Mar)</option>
+          <option value="Q2-2026">Q2 2026 (Apr–Jun)</option>
+          <option value="Q3-2026">Q3 2026 (Jul–Sep)</option>
+          <option value="Q4-2025" selected>Q4 2025 (Oct–Dec)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Current Week (1–13)</label>
+        <input type="number" id="settingWeek" class="form-control" min="1" max="13" value="3">
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-title">👥 Team Members</div>
+    <div class="form-row form-row-3" style="margin-bottom:14px">
+      <div class="form-group" style="margin:0"><label class="form-label">Name</label><input id="newMemberName" class="form-control" placeholder="Full Name"></div>
+      <div class="form-group" style="margin:0"><label class="form-label">Role/Title</label><input id="newMemberRole" class="form-control" placeholder="CEO / Visionary"></div>
+      <div class="form-group" style="margin:0"><label class="form-label">Color</label>
+        <select id="newMemberColor" class="form-control">
+          <option value="#ff6b35">Orange</option><option value="#007bff">Blue</option><option value="#28a745">Green</option>
+          <option value="#6f42c1">Purple</option><option value="#fd7e14">Amber</option><option value="#20c997">Teal</option>
+          <option value="#e83e8c">Pink</option><option value="#343a40">Dark</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="addTeamMember()">+ Add Member</button>
+    <div class="divider"></div>
+    <table class="data-table" id="membersTable">
+      <thead><tr><th>Name</th><th>Role</th><th>Color</th><th>Actions</th></tr></thead>
+      <tbody id="membersBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-title">💾 Data Management</div>
+    <div class="flex-row" style="flex-wrap:wrap;gap:12px">
+      <button class="btn btn-primary" onclick="saveAllSettings()">💾 Save Settings</button>
+      <button class="btn btn-secondary" onclick="exportData()">⬆ Export All Data (JSON)</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('importFile').click()">⬇ Import Data</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+      <button class="btn btn-danger" onclick="resetAllData()">↺ Reset All Data</button>
+    </div>
+    <div class="note-box" style="margin-top:16px">
+      <strong>💡 Multi-User Tip:</strong> This app stores data in your browser's localStorage. To share across team members, use "Export All Data" and send the JSON file — each person can import it to sync up. For true real-time collaboration, you'd need a backend server.
+    </div>
+  </div>
+</div>
+
+</div><!-- /content -->
+</div><!-- /app-container -->
+</div><!-- /appShell -->
+
+<!-- ===== MODALS ===== -->
+
+<!-- Add Issue -->
+<div id="addIssueModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'addIssueModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('addIssueModal')">×</button>
+    <div class="modal-title">Add Issue</div>
+    <div class="modal-sub">Issues should be specific and actionable. Use IDS during the meeting.</div>
+    <div class="form-group">
+      <label class="form-label">Issue / Problem</label>
+      <textarea id="issueText" class="form-control" rows="3" placeholder="Describe the issue clearly..."></textarea>
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Raised By</label>
+        <select id="issueWho" class="form-control"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <select id="issueCat" class="form-control">
+          <option>People</option><option>Process</option><option>Revenue</option><option>Customer</option>
+          <option>Operations</option><option>Strategy</option><option>Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('addIssueModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveIssue()">Add Issue</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add To-Do -->
+<div id="addTodoModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'addTodoModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('addTodoModal')">×</button>
+    <div class="modal-title">Add To-Do</div>
+    <div class="modal-sub">To-dos should be completable within 7 days with a clear owner.</div>
+    <div class="form-group">
+      <label class="form-label">Task</label>
+      <input id="todoTask" class="form-control" placeholder="What needs to be done?">
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Owner</label>
+        <select id="todoOwner" class="form-control"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Due Date</label>
+        <input type="date" id="todoDue" class="form-control">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notes (optional)</label>
+      <textarea id="todoNotes" class="form-control" rows="2" placeholder="Any context or details..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('addTodoModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTodo()">Add To-Do</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Rock -->
+<div id="addRockModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'addRockModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('addRockModal')">×</button>
+    <div class="modal-title" id="rockModalTitle">Add Rock</div>
+    <div class="modal-sub">Rocks are the 3–7 most important priorities for the quarter.</div>
+    <div class="form-group">
+      <label class="form-label">Rock Title</label>
+      <input id="rockTitle" class="form-control" placeholder="e.g. Launch new product line">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description / Key Milestones</label>
+      <textarea id="rockDesc" class="form-control" rows="3" placeholder="What does done look like?"></textarea>
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Owner</label>
+        <select id="rockOwner" class="form-control"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Due Date</label>
+        <input type="date" id="rockDue" class="form-control">
+      </div>
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select id="rockStatus" class="form-control">
+          <option value="on-track">On Track</option>
+          <option value="off-track">Off Track</option>
+          <option value="complete">Complete</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Progress (%)</label>
+        <input type="number" id="rockProgress" class="form-control" min="0" max="100" value="0">
+      </div>
+    </div>
+    <input type="hidden" id="rockEditId">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('addRockModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRock()">Save Rock</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Metric -->
+<div id="addMetricModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'addMetricModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('addMetricModal')">×</button>
+    <div class="modal-title">Add Scorecard Metric</div>
+    <div class="modal-sub">Track a weekly measurable. Choose who owns it and set your goal.</div>
+    <div class="form-group">
+      <label class="form-label">Metric Name</label>
+      <input id="metricName" class="form-control" placeholder="e.g. New Leads, Revenue, NPS Score">
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Owner</label>
+        <select id="metricOwner" class="form-control"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Goal Value</label>
+        <input id="metricGoal" class="form-control" placeholder="e.g. 50000 or 4.5">
+      </div>
+    </div>
+    <div class="form-row form-row-2">
+      <div class="form-group">
+        <label class="form-label">Format</label>
+        <select id="metricFormat" class="form-control">
+          <option value="number">Number</option>
+          <option value="dollar">Dollar ($)</option>
+          <option value="percent">Percent (%)</option>
+          <option value="decimal">Decimal</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Better if</label>
+        <select id="metricDirection" class="form-control">
+          <option value="gte">≥ Goal (higher is better)</option>
+          <option value="lte">≤ Goal (lower is better)</option>
+        </select>
+      </div>
+    </div>
+    <input type="hidden" id="metricEditId">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('addMetricModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMetric()">Add Metric</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Headline -->
+<div id="addHeadlineModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'addHeadlineModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('addHeadlineModal')">×</button>
+    <div class="modal-title">Add Headline</div>
+    <div class="modal-sub">Share good or bad news about customers or employees.</div>
+    <div class="form-group">
+      <label class="form-label">Headline</label>
+      <textarea id="headlineText" class="form-control" rows="3" placeholder="What happened?"></textarea>
+    </div>
+    <div class="form-row form-row-3">
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <select id="headlineType" class="form-control">
+          <option value="customer-good">✅ Customer — Good</option>
+          <option value="customer-bad">⚠️ Customer — Bad</option>
+          <option value="employee-good">✅ Employee — Good</option>
+          <option value="employee-bad">⚠️ Employee — Bad</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Shared By</label>
+        <select id="headlineWho" class="form-control"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date</label>
+        <input type="date" id="headlineDate" class="form-control">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('addHeadlineModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveHeadline()">Add Headline</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Team Setup -->
+<div id="newTeamModal" class="modal-overlay" style="display:none" onclick="closeModalOnBg(event,'newTeamModal')">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('newTeamModal')">×</button>
+    <div class="modal-title">Create New Team</div>
+    <div class="modal-sub">Set up a new L10 team / department. Each team has its own data.</div>
+    <div class="form-group">
+      <label class="form-label">Team Name</label>
+      <input id="newTeamName" class="form-control" placeholder="e.g. Operations Team, Sales Team">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Company Name</label>
+      <input id="newTeamCompany" class="form-control" placeholder="e.g. Acme Corp">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('newTeamModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createNewTeam()">Create Team</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:400px;text-align:center">
+    <div style="font-size:48px;margin-bottom:12px" id="confirmIcon">⚠️</div>
+    <div class="modal-title" id="confirmTitle">Are you sure?</div>
+    <div style="color:#6c757d;font-size:14px;margin:8px 0 24px" id="confirmMsg">This action cannot be undone.</div>
+    <div class="flex-row" style="justify-content:center">
+      <button class="btn btn-secondary" onclick="resolveConfirm(false)">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn" onclick="resolveConfirm(true)">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script>
+// ==============================
+// DATA MODEL
+// ==============================
+const COLORS = ['#ff6b35','#007bff','#28a745','#6f42c1','#fd7e14','#20c997','#e83e8c','#343a40'];
+
+let appData = {
+  teams: {},        // keyed by teamId
+  currentTeamId: null,
+  currentUser: null,
+};
+
+// Per-team data structure
+function newTeamData(teamName, company) {
+  return {
+    id: 'team_' + Date.now(),
+    name: teamName,
+    company: company || '',
+    logo: null,
+    meetingDay: 'Monday',
+    meetingTime: '09:00',
+    quarter: 'Q4-2025',
+    currentWeek: 3,
+    members: [],
+    metrics: [],
+    rocks: [],
+    issues: [],
+    todos: [],
+    headlines: [],
+    history: [],
+    scorecardData: {}, // metricId -> { wk1..wk13 }
+  };
+}
+
+function getTeam() {
+  return appData.teams[appData.currentTeamId];
+}
+// ── R0 helpers ──────────────────────────────────────────────
+function newId(p){ return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,6); }
+function nowIso(){ return new Date().toISOString(); }
+function touch(e){ e.updatedAt=nowIso(); return e; }
+function ensureMeeting(){ return timerState.meetingId||null; }
+function isFacilitator(){
+  const team=getTeam(); if(!team||!timerState.meetingStarted) return true;
+  const mem=(team.members||[]).find(m=>m.name.toLowerCase().trim()===(appData.currentUser||'').toLowerCase().trim());
+  return !team.lastFacilitator || (mem&&mem.id===team.lastFacilitator);
+}
+
+function saveData() {
+  localStorage.setItem('eos_l10_v2', JSON.stringify(appData));
+}
+
+function loadData() {
+  const raw = localStorage.getItem('eos_l10_v2');
+  if (raw) {
+    try { appData = JSON.parse(raw); } catch(e) {}
+  }
+  // Seed a default team if none
+  if (!appData.teams || Object.keys(appData.teams).length === 0) {
+    const t = newTeamData('Leadership Team', 'My Company');
+    t.members = [
+      {id:'m1', name:'Sarah Johnson', role:'CEO / Visionary', color:'#ff6b35'},
+      {id:'m2', name:'Mike Chen', role:'COO / Integrator', color:'#007bff'},
+      {id:'m3', name:'Lisa Martinez', role:'VP Sales', color:'#28a745'},
+    ];
+    t.rocks = [
+      {id:'r1', title:'Launch new product line', desc:'Full market launch by end of quarter', owner:'m1', due:'2025-12-31', status:'on-track', progress:75, created: Date.now()},
+      {id:'r2', title:'Hire 3 new sales reps', desc:'Recruit, interview, and onboard', owner:'m2', due:'2025-12-31', status:'on-track', progress:60, created: Date.now()},
+      {id:'r3', title:'Implement new CRM system', desc:'Select vendor, migrate data, train team', owner:'m3', due:'2025-12-31', status:'off-track', progress:40, created: Date.now()},
+    ];
+    t.metrics = [
+      {id:'met1', name:'Weekly Revenue', owner:'m1', goal:'50000', format:'dollar', direction:'gte'},
+      {id:'met2', name:'New Customers', owner:'m2', goal:'10', format:'number', direction:'gte'},
+      {id:'met3', name:'Customer Satisfaction', owner:'m3', goal:'4.5', format:'decimal', direction:'gte'},
+    ];
+    t.scorecardData = {
+      'met1': {1:'52000',2:'48000'},
+      'met2': {1:'12',2:'8'},
+      'met3': {1:'4.6',2:'4.2'},
+    };
+    t.issues = [
+      {id:'i1', text:'Q4 revenue projections need review', who:'m1', cat:'Revenue', solved:false, created: Date.now()},
+      {id:'i2', text:'Customer onboarding taking too long (avg 14 days, target 7)', who:'m3', cat:'Customer', solved:false, created: Date.now()-86400000},
+      {id:'i3', text:'Need decision on office expansion plans', who:'m2', cat:'Operations', solved:false, created: Date.now()-172800000},
+    ];
+    t.todos = [
+      {id:'t1', task:'Send Q4 proposal to ABC Corp', owner:'m1', due:'2025-10-05', notes:'', done:false, fromMeeting: null, created:Date.now()},
+      {id:'t2', task:'Schedule interviews for sales positions', owner:'m2', due:'2025-10-03', notes:'', done:false, fromMeeting: null, created:Date.now()},
+      {id:'t3', task:'Complete customer satisfaction survey analysis', owner:'m3', due:'2025-09-30', notes:'', done:true, fromMeeting: null, created:Date.now()},
+    ];
+    t.headlines = [
+      {id:'h1', text:'Signed new enterprise client — $500K annual contract', type:'customer-good', who:'m1', date:'2025-10-15', created:Date.now()},
+      {id:'h2', text:'Customer complaint about delayed shipping (avg +3 days)', type:'customer-bad', who:'m3', date:'2025-10-12', created:Date.now()},
+      {id:'h3', text:'Sarah completed leadership training certification', type:'employee-good', who:'m1', date:'2025-10-18', created:Date.now()},
+      {id:'h4', text:'Sales team hit Q3 target 2 weeks early!', type:'employee-good', who:'m2', date:'2025-10-10', created:Date.now()},
+    ];
+    appData.teams = {};
+    appData.teams[t.id] = t;
+    appData.currentTeamId = null;
+    appData.currentUser = null;
+    saveData();
+  }
+}
+
+// ==============================
+// LOGIN
+// ==============================
+function buildLoginUI() {
+  const teams = Object.values(appData.teams);
+  const teamSel = document.getElementById('loginTeam');
+  teamSel.innerHTML = '<option value="">— Select your L10 team —</option>';
+  teams.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.id; opt.textContent = t.name + (t.company ? ' — ' + t.company : '');
+    teamSel.appendChild(opt);
+  });
+
+  // Saved users — deduplicate by name, keep most-recent entry per name
+  const chips = document.getElementById('savedUserChips');
+  chips.innerHTML = '';
+  const savedUsers = JSON.parse(localStorage.getItem('eos_saved_users') || '[]');
+  const seenNames = new Set();
+  const uniqueUsers = savedUsers.filter(u => {
+    const key = u.name.toLowerCase().trim();
+    if (seenNames.has(key)) return false;
+    seenNames.add(key); return true;
+  });
+  uniqueUsers.slice(0, 8).forEach(u => {
+    const chip = document.createElement('div');
+    chip.className = 'user-chip';
+    chip.textContent = u.name;
+    chip.onclick = () => {
+      document.getElementById('loginName').value = u.name;
+      const el = document.getElementById('loginTeam');
+      if (u.teamId && appData.teams[u.teamId]) el.value = u.teamId;
+    };
+    chips.appendChild(chip);
+  });
+}
+
+function doLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  const teamId = document.getElementById('loginTeam').value;
+  if (!name) { showToast('Please enter your name','warning'); return; }
+  if (!teamId) { showToast('Please select a team','warning'); return; }
+
+  appData.currentUser = name;
+  appData.currentTeamId = teamId;
+
+  // Save to recent users — deduplicate by name (case-insensitive)
+  const saved = JSON.parse(localStorage.getItem('eos_saved_users') || '[]');
+  const existing = saved.findIndex(u => u.name.toLowerCase().trim() === name.toLowerCase().trim());
+  if (existing >= 0) saved.splice(existing, 1);
+  saved.unshift({name, teamId});
+  localStorage.setItem('eos_saved_users', JSON.stringify(saved.slice(0, 10)));
+
+  saveData();
+  launchApp();
+}
+
+function doLogout() {
+  if (!confirm('Return to login screen?')) return;
+  appData.currentUser = null;
+  appData.currentTeamId = null;
+  saveData();
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  buildLoginUI();
+}
+
+function showNewTeamSetup() {
+  showModal('newTeamModal');
+}
+
+function createNewTeam() {
+  const name = document.getElementById('newTeamName').value.trim();
+  const company = document.getElementById('newTeamCompany').value.trim();
+  if (!name) { showToast('Team name required','warning'); return; }
+  const t = newTeamData(name, company);
+  appData.teams[t.id] = t;
+  saveData();
+  closeModal('newTeamModal');
+  buildLoginUI();
+  document.getElementById('loginTeam').value = t.id;
+  showToast('Team created! Now sign in.','success');
+}
+
+// ==============================
+// APP LAUNCH
+// ==============================
+function launchApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appShell').style.display = 'block';
+  initApp();
+}
+
+function initApp() {
+  const team = getTeam();
+  if (!team) return;
+
+  // Header
+  document.getElementById('headerUserName').textContent = appData.currentUser;
+  const initials = appData.currentUser.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+  const member = team.members.find(m => m.name.toLowerCase().includes(appData.currentUser.split(' ')[0].toLowerCase()));
+  const color = member ? member.color : '#ff6b35';
+  document.getElementById('headerAvatar').textContent = initials;
+  document.getElementById('headerAvatar').style.background = color;
+  document.getElementById('headerTeamLabel').textContent = team.name + (team.company ? ' • ' + team.company : '');
+
+  // Logo
+  // Logo (global across all teams)
+  applyLogo(appData.globalLogo || null);
+
+  // Date
+  const now = new Date();
+  document.getElementById('headerDate').textContent = now.toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+
+  // Settings
+  document.getElementById('settingCompany').value = team.company || '';
+  document.getElementById('settingTeam').value = team.name || '';
+  document.getElementById('settingDay').value = team.meetingDay || 'Monday';
+  document.getElementById('settingTime').value = team.meetingTime || '09:00';
+  document.getElementById('settingQuarter').value = team.quarter || 'Q4-2025';
+  document.getElementById('settingWeek').value = team.currentWeek || 3;
+
+  // Scorecard week
+  document.getElementById('scorecardWeekSelect').value = team.currentWeek || 3;
+  highlightCurrentWeekHeader();
+
+  // Next meeting
+  updateNextMeetingLabel();
+
+  renderAll();
+  updateBadges();
+}
+
+function renderAll() {
+  renderDashboard();
+  renderScorecard();
+  renderRocks();
+  renderIssues();
+  renderTodos();
+  renderHeadlines();
+  renderHistory();
+  renderMembers();
+  populateOwnerDropdowns();
+  renderSidebarAgenda();
+  renderMeetingContent();
+  populateMeetingRoles();
+  renderMeetingNotesList();
+}
+
+// ==============================
+// NAV
+// ==============================
+function showPage(id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+// ==============================
+// DASHBOARD
+// ==============================
+function renderDashboard() {
+  const team = getTeam(); if (!team) return;
+
+  // Agenda list
+  const agendaData = [
+    {name:'1. Segue (Good News Roundtable)', time:'5 min'},
+    {name:'2. Scorecard Review', time:'5 min'},
+    {name:'3. Rock Review', time:'5 min'},
+    {name:'4. Customer/Employee Headlines', time:'5 min'},
+    {name:'5. To-Do List Review', time:'5 min'},
+    {name:'6. IDS (Identify, Discuss, Solve)', time:'60 min'},
+    {name:'7. Conclude (Rate, Recap, Cascade)', time:'5 min'},
+  ];
+  const ul = document.getElementById('dashAgenda');
+  ul.innerHTML = '';
+  agendaData.forEach(a => {
+    const li = document.createElement('li');
+    li.className = 'agenda-item';
+    li.innerHTML = `<span class="agenda-name">${a.name}</span><span class="agenda-time">${a.time}</span>`;
+    ul.appendChild(li);
+  });
+
+  // KPIs
+  const metrics = team.metrics || [];
+  const sData = team.scorecardData || {};
+  const cw = team.currentWeek || 3;
+  let onTrack = 0, total = metrics.length;
+  metrics.forEach(m => {
+    const val = parseFloat((sData[m.id] || {})[cw]);
+    const goal = parseFloat(m.goal);
+    if (!isNaN(val) && !isNaN(goal)) {
+      if (m.direction === 'gte' && val >= goal) onTrack++;
+      if (m.direction === 'lte' && val <= goal) onTrack++;
+    }
+  });
+  document.getElementById('kpiScorecard').textContent = total ? `${onTrack}/${total}` : '—';
+  document.getElementById('kpiScorecardBadge').innerHTML = total ? `<span class="badge ${onTrack/total>=.8?'badge-green':'badge-red'}">${Math.round(onTrack/total*100)}% Green</span>` : '';
+
+  const rocks = team.rocks || [];
+  const onTrackRocks = rocks.filter(r=>r.status==='on-track').length;
+  document.getElementById('kpiRocks').textContent = rocks.length ? `${onTrackRocks}/${rocks.length}` : '—';
+  document.getElementById('kpiRocksBadge').innerHTML = rocks.length ? `<span class="badge badge-${onTrackRocks/rocks.length>=.75?'green':'yellow'}">${Math.round(onTrackRocks/rocks.length*100)}% On Track</span>` : '';
+
+  const issues = (team.issues||[]).filter(i=>!i.solved);
+  document.getElementById('kpiIssues').textContent = issues.length;
+  document.getElementById('kpiIssuesBadge').innerHTML = issues.length > 5 ? `<span class="badge badge-red">High Volume</span>` : `<span class="badge badge-gray">${issues.length} Open</span>`;
+
+  const todos = (team.todos||[]).filter(t=>!t.done);
+  const overdue = todos.filter(t=>t.due&&new Date(t.due)<new Date()).length;
+  document.getElementById('kpiTodos').textContent = todos.length;
+  document.getElementById('kpiTodosBadge').innerHTML = overdue ? `<span class="badge badge-red">${overdue} Overdue</span>` : `<span class="badge badge-green">All On Time</span>`;
+
+  // Todo completion rate
+  const allTodos = team.todos||[];
+  const done = allTodos.filter(t=>t.done).length;
+  const rate = allTodos.length ? Math.round(done/allTodos.length*100) : 0;
+  document.getElementById('todoCompRate').textContent = rate + '%';
+  document.getElementById('todoCompBar').style.width = rate + '%';
+
+  // Quarter label
+  document.getElementById('dashQuarterLabel').textContent = team.quarter + ' • Week ' + cw;
+
+  // Recent activity
+  const history = team.history || [];
+  if (history.length) {
+    const last = history[history.length-1];
+    document.getElementById('recentActivity').innerHTML = `
+      <div>📅 Last meeting: <strong>${new Date(last.date).toLocaleDateString()}</strong></div>
+      <div>⭐ Rating: <strong>${last.rating}/10</strong></div>
+      <div>✅ To-Dos closed: <strong>${last.todosClosed || 0}</strong></div>
+      <div>⚡ Issues solved: <strong>${last.issuesSolved || 0}</strong></div>
+    `;
+  } else {
+    document.getElementById('recentActivity').textContent = 'No meetings yet. Start your first L10!';
+  }
+}
+
+// ==============================
+// SCORECARD
+// ==============================
+function renderScorecard() {
+  const team = getTeam(); if (!team) return;
+  const metrics = team.metrics || [];
+  const sData = team.scorecardData || {};
+  const cw = parseInt(document.getElementById('scorecardWeekSelect').value) || team.currentWeek || 3;
+
+  highlightCurrentWeekHeader();
+  document.getElementById('scorecardQuarterLabel').textContent = `${team.quarter} • 13-week tracking`;
+
+  const tbody = document.getElementById('scorecardBody');
+  tbody.innerHTML = '';
+
+  if (!metrics.length) {
+    document.getElementById('scorecardEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('scorecardEmpty').style.display = 'none';
+
+  metrics.forEach(m => {
+    const memberData = sData[m.id] || {};
+    const owner = team.members.find(x => x.id === m.owner);
+    const tr = document.createElement('tr');
+
+    // Determine status from current week
+    const cwVal = parseFloat(memberData[cw]);
+    const goal = parseFloat(m.goal);
+    let status = '—', statusClass = '';
+    if (!isNaN(cwVal) && !isNaN(goal)) {
+      const ok = m.direction==='gte' ? cwVal>=goal : cwVal<=goal;
+      status = ok ? '✅ On Track' : '❌ Off Track';
+      statusClass = ok ? 'badge-green' : 'badge-red';
+    }
+
+    let cells = `
+      <td class="col-name s-col s-name">${escH(m.name)}</td>
+      <td class="col-who s-col s-who">${owner ? `<span class="avatar" style="background:${owner.color};display:inline-flex;margin-right:4px">${initials(owner.name)}</span>${owner.name.split(' ')[0]}` : '—'}</td>
+      <td class="col-goal s-col s-goal"><strong>${formatMetricVal(m.goal, m.format)}</strong></td>
+      <td class="s-col s-dir">${m.direction==='gte'?'↑ Higher':'↓ Lower'}</td>
+    `;
+    for (let w = 1; w <= 13; w++) {
+      const val = memberData[w] !== undefined ? memberData[w] : '';
+      const isCurrentWeek = w === cw;
+      const numVal = parseFloat(val);
+      let cellClass = isCurrentWeek ? 'week-current' : '';
+      if (!isNaN(numVal) && !isNaN(goal)) {
+        const ok = m.direction==='gte' ? numVal>=goal : numVal<=goal;
+        cellClass += ' ' + (ok ? 'cell-green' : 'cell-red');
+      }
+      const dispVal = (val !== '') ? formatMetricVal(val, m.format) : '';
+      cells += `<td class="col-week ${cellClass}"><input class="score-input" type="text" value="${escH(dispVal)}" data-raw="${escH(val)}" data-metric="${m.id}" data-week="${w}" data-fmt="${m.format}" placeholder="—"
+        onfocus="this.value=this.dataset.raw||'';this.dataset.focused='1'"
+        onblur="scoreInputBlur(this)"
+        onchange="scoreInputChange(this)"
+        ${w>cw&&!val?'style="background:#f0f0f0"':''}></td>`;
+    }
+    cells += `
+      <td class="col-status">${status ? `<span class="badge ${statusClass}">${status}</span>` : '<span class="badge badge-gray">No Data</span>'}</td>
+      <td><button class="btn btn-xs btn-secondary" onclick="editMetric('${m.id}')">✏️</button> <button class="btn btn-xs btn-danger" onclick="deleteMetric('${m.id}')">🗑</button></td>
+    `;
+    tr.innerHTML = cells;
+    tbody.appendChild(tr);
+  });
+}
+
+function highlightCurrentWeekHeader() {
+  const cw = parseInt(document.getElementById('scorecardWeekSelect').value) || 3;
+  for (let w = 1; w <= 13; w++) {
+    const th = document.getElementById('wkh' + w);
+    if (th) th.style.background = w===cw ? 'rgba(255,107,53,.15)' : '';
+  }
+}
+
+function updateScore(metricId, week, val) {
+  const team = getTeam(); if (!team) return;
+  if (!team.scorecardData[metricId]) team.scorecardData[metricId] = {};
+  team.scorecardData[metricId][week] = val;
+  saveData();
+  renderScorecard();
+  renderDashboard();
+  updateBadges();
+}
+
+function showAddMetricModal() {
+  document.getElementById('metricName').value='';
+  document.getElementById('metricOwner').value='';
+  document.getElementById('metricGoal').value='';
+  document.getElementById('metricFormat').value='number';
+  document.getElementById('metricDirection').value='gte';
+  document.getElementById('metricEditId').value='';
+  showModal('addMetricModal');
+}
+
+function saveMetric() {
+  const team = getTeam(); if (!team) return;
+  const name = document.getElementById('metricName').value.trim();
+  const owner = document.getElementById('metricOwner').value;
+  const goal = document.getElementById('metricGoal').value.trim();
+  const format = document.getElementById('metricFormat').value;
+  const direction = document.getElementById('metricDirection').value;
+  const editId = document.getElementById('metricEditId').value;
+  if (!name || !goal) { showToast('Name and goal are required','warning'); return; }
+
+  if (editId) {
+    const m = team.metrics.find(x=>x.id===editId);
+    if (m) { m.name=name; m.owner=owner; m.goal=goal; m.format=format; m.direction=direction; }
+  } else {
+    team.metrics.push({id:'met_'+Date.now(), name, owner, goal, format, direction});
+  }
+  saveData(); closeModal('addMetricModal'); renderScorecard(); renderDashboard(); updateBadges();
+  showToast('Metric saved!','success');
+}
+
+function editMetric(id) {
+  const team = getTeam(); if (!team) return;
+  const m = team.metrics.find(x=>x.id===id); if (!m) return;
+  document.getElementById('metricName').value = m.name;
+  document.getElementById('metricOwner').value = m.owner;
+  document.getElementById('metricGoal').value = m.goal;
+  document.getElementById('metricFormat').value = m.format;
+  document.getElementById('metricDirection').value = m.direction;
+  document.getElementById('metricEditId').value = m.id;
+  showModal('addMetricModal');
+}
+
+function deleteMetric(id) {
+  confirm2('Delete this metric and all its data?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.metrics = team.metrics.filter(x=>x.id!==id);
+    delete team.scorecardData[id];
+    saveData(); renderScorecard(); updateBadges();
+    showToast('Metric deleted');
+  });
+}
+
+// ==============================
+// ROCKS
+// ==============================
+function renderRocks() {
+  const team = getTeam(); if (!team) return;
+  const filterOwner = document.getElementById('rocksFilterOwner').value;
+  let rocks = team.rocks || [];
+  if (filterOwner) rocks = rocks.filter(r=>r.owner===filterOwner);
+
+  document.getElementById('rocksQuarterLabel').textContent = `${team.quarter}`;
+  const container = document.getElementById('rocksList');
+  container.innerHTML = '';
+
+  if (!rocks.length) {
+    document.getElementById('rocksEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('rocksEmpty').style.display = 'none';
+
+  rocks.forEach(r => {
+    const owner = team.members.find(m=>m.id===r.owner);
+    const pct = r.progress || 0;
+    const div = document.createElement('div');
+    div.className = `rock-card ${r.status}`;
+    div.innerHTML = `
+      <div class="flex-between">
+        <div>
+          <div class="rock-title-text">${escH(r.title)}</div>
+          <div class="rock-owner-text">${owner ? `<span class="avatar" style="background:${owner.color};display:inline-flex;width:20px;height:20px;font-size:10px">${initials(owner.name)}</span> ${owner.name}` : 'Unassigned'} ${r.due ? '• Due '+new Date(r.due).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''}</div>
+          ${r.desc ? `<div style="font-size:13px;color:#6c757d;margin-top:6px">${escH(r.desc)}</div>` : ''}
+        </div>
+        <div style="text-align:right;display:flex;gap:8px;align-items:start;flex-shrink:0">
+          <span class="badge badge-${r.status==='on-track'?'green':r.status==='off-track'?'red':'gray'}">${r.status==='on-track'?'On Track':r.status==='off-track'?'Off Track':'Complete'}</span>
+          <button class="btn btn-xs btn-secondary" onclick="editRock('${r.id}')">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteRock('${r.id}')">🗑</button>
+        </div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${r.status==='off-track'?'#dc3545':r.status==='complete'?'#6c757d':''}"></div></div>
+      <div style="font-size:12px;color:#6c757d;margin-top:6px">${pct}% Complete</div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function showAddRockModal() {
+  document.getElementById('rockModalTitle').textContent = 'Add Rock';
+  document.getElementById('rockTitle').value='';
+  document.getElementById('rockDesc').value='';
+  document.getElementById('rockOwner').value='';
+  document.getElementById('rockDue').value='';
+  document.getElementById('rockStatus').value='on-track';
+  document.getElementById('rockProgress').value='0';
+  document.getElementById('rockEditId').value='';
+  showModal('addRockModal');
+}
+
+function editRock(id) {
+  const team = getTeam(); if (!team) return;
+  const r = team.rocks.find(x=>x.id===id); if (!r) return;
+  document.getElementById('rockModalTitle').textContent = 'Edit Rock';
+  document.getElementById('rockTitle').value = r.title;
+  document.getElementById('rockDesc').value = r.desc||'';
+  document.getElementById('rockOwner').value = r.owner||'';
+  document.getElementById('rockDue').value = r.due||'';
+  document.getElementById('rockStatus').value = r.status;
+  document.getElementById('rockProgress').value = r.progress||0;
+  document.getElementById('rockEditId').value = r.id;
+  showModal('addRockModal');
+}
+
+function saveRock() {
+  const team = getTeam(); if (!team) return;
+  const title = document.getElementById('rockTitle').value.trim();
+  if (!title) { showToast('Title required','warning'); return; }
+  const editId = document.getElementById('rockEditId').value;
+  const data = {
+    title, desc: document.getElementById('rockDesc').value.trim(),
+    owner: document.getElementById('rockOwner').value,
+    due: document.getElementById('rockDue').value,
+    status: document.getElementById('rockStatus').value,
+    progress: parseInt(document.getElementById('rockProgress').value)||0,
+  };
+  if (editId) {
+    const r = team.rocks.find(x=>x.id===editId);
+    if (r) Object.assign(r, data);
+  } else {
+    team.rocks.push({id:'r_'+Date.now(), ...data, created:Date.now()});
+  }
+  saveData(); closeModal('addRockModal'); renderRocks(); renderDashboard(); updateBadges();
+  showToast('Rock saved!','success');
+}
+
+function deleteRock(id) {
+  confirm2('Delete this rock?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.rocks = team.rocks.filter(x=>x.id!==id);
+    saveData(); renderRocks(); renderDashboard(); updateBadges();
+    showToast('Rock deleted');
+  });
+}
+
+// ==============================
+// ISSUES
+// ==============================
+let showSolved = false;
+function toggleShowSolved() { showSolved = !showSolved; renderIssues(); }
+
+function renderIssues() {
+  const team = getTeam(); if (!team) return;
+  let issues = [...(team.issues || [])];
+  if (!showSolved) issues = issues.filter(i=>!i.solved);
+
+  // P3.1 stable sort: prioritized first, then by votes, then by createdAt
+  const pri = issues.filter(i=>i.isPrioritized&&!i.solved).sort((a,b)=>(a.priorityRank||99)-(b.priorityRank||99));
+  const rest = issues.filter(i=>!i.isPrioritized||i.solved).sort((a,b)=>{
+    const vd=(b.votes||Object.keys(b.votesByMemberId||{}).length)-(a.votes||Object.keys(a.votesByMemberId||{}).length);
+    return vd||((a.createdAt||a.created||'')>(b.createdAt||b.created||'')?1:-1);
+  });
+  const sorted=[...pri,...rest];
+
+  const container = document.getElementById('issuesList');
+  container.innerHTML = '';
+
+  if (!sorted.length) {
+    document.getElementById('issuesEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('issuesEmpty').style.display = 'none';
+
+  // P1.7 prioritized header
+  if(pri.length){
+    const h=document.createElement('div');
+    h.innerHTML='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#ff6b35;padding:6px 10px;background:#fff8f5;border-radius:7px;margin-bottom:8px">⭐ Prioritized IDS Order</div>';
+    container.appendChild(h);
+  }
+
+  sorted.forEach((iss, idx) => {
+    const who = team.members.find(m=>m.id===iss.who);
+    const votes = iss.votes||Object.keys(iss.votesByMemberId||{}).length||0;
+    const isPri = iss.isPrioritized&&!iss.solved;
+    const isDiscussing = currentDiscussingId === iss.id;
+    const div = document.createElement('div');
+    div.className = `issue-card${iss.solved?' solved':''}${isDiscussing?' discussing':''}`;
+    if(isPri) div.style.cssText='border-left:4px solid #ff6b35;background:#fffaf8';
+    div.innerHTML = `
+      <div class="issue-priority" style="${isPri?'background:#ff6b35':''}">${isPri?(iss.priorityRank||'★'):(idx+1)}</div>
+      <div class="issue-text">
+        <div style="font-weight:600">${escH(iss.text)}</div>
+        <div style="font-size:12px;color:#adb5bd;margin-top:3px">${iss.cat||''} ${who?'• '+who.name:''} ${iss.sourceType?'• from '+iss.sourceType:''} • ${new Date(iss.createdAt||iss.created||Date.now()).toLocaleDateString()}</div>
+      </div>
+      ${!iss.solved ? `
+        <div class="vote-block">
+          <button class="vote-btn vote-btn-minus" onclick="voteIssue('${iss.id}',-1)" title="Remove vote">−</button>
+          <span class="vote-count">${votes}</span>
+          <button class="vote-btn vote-btn-plus" onclick="voteIssue('${iss.id}',1)" title="Vote up">+</button>
+        </div>
+        ${isFacilitator()?`<button class="btn btn-xs" style="background:${isPri?'#fee2e2':'#fff8f5'};color:#c9400a;border:1px solid #fbd5c5;font-size:11px" onclick="togglePrioritize('${iss.id}')" title="${isPri?'Remove from top 3':'Add to prioritized IDS'}">${isPri?'✕ Deprioritize':'⭐ Prioritize'}</button>`:''}
+        ${isPri?`<button class="btn btn-xs" style="background:#f1f5f9;font-size:11px" onclick="shiftPriority('${iss.id}',-1)">↑</button><button class="btn btn-xs" style="background:#f1f5f9;font-size:11px" onclick="shiftPriority('${iss.id}',1)">↓</button>`:''}
+      ` : ''}
+      <span class="badge badge-${iss.solved?'gray':isDiscussing?'orange':'blue'}">${iss.solved?'Solved':isDiscussing?'Discussing':'Open'}</span>
+      ${!iss.solved ? `
+        <button class="btn btn-xs btn-${isDiscussing?'secondary':'primary'}" onclick="toggleDiscuss('${iss.id}')">${isDiscussing?'▼ Hide':'▶ Discuss'}</button>
+        <button class="btn btn-xs btn-success" onclick="solveIssue('${iss.id}')">✓ Solve</button>
+      ` : ''}
+      <button class="btn btn-xs btn-secondary" onclick="editIssue('${iss.id}')">✏️</button>
+      <button class="btn btn-xs btn-danger" onclick="deleteIssue('${iss.id}')">🗑</button>
+    `;
+    container.appendChild(div);
+
+    // Inline IDS panel directly under discussing issue
+    if (isDiscussing) {
+      const panel = document.createElement('div');
+      panel.className = 'ids-panel';
+      panel.id = 'inlineIdsPanel_' + iss.id;
+      const memberOptions = (getTeam()&&getTeam().members||[]).map(m=>`<option value="${m.id}" ${(iss.idsOwner||iss.idsWho)===m.id?'selected':''}>${escH(m.name)}</option>`).join('');
+      panel.innerHTML = `
+        <div class="ids-badge-discussing">▶ IDS IN PROGRESS</div>
+        <div class="ids-panel-issue">"${escH(iss.text)}"</div>
+        <div class="ids-fields">
+          <div class="ids-field" style="grid-column:1/-1">
+            <label>🔍 IDENTIFY — What is the real root cause? (not just the symptom)</label>
+            <textarea id="ids_identify_${iss.id}" placeholder="Get to the root..." oninput="saveIdsField('${iss.id}','idsIdentify',this.value)">${escH(iss.idsIdentify||'')}</textarea>
+          </div>
+          <div class="ids-field">
+            <label>👤 WHO owns resolving this?</label>
+            <select id="ids_who_${iss.id}" onchange="saveIdsField('${iss.id}','idsOwner',this.value)">
+              <option value="">— Select owner —</option>
+              ${memberOptions}
+            </select>
+          </div>
+          <div class="ids-field">
+            <label>📅 BY WHEN must it be resolved?</label>
+            <input type="date" id="ids_when_${iss.id}" value="${iss.idsWhen||''}" oninput="saveIdsField('${iss.id}','idsWhen',this.value)">
+          </div>
+          <div class="ids-field" style="grid-column:1/-1">
+            <label>💡 SOLVE — What is the agreed solution / decision?</label>
+            <textarea id="ids_solve_${iss.id}" placeholder="Clear conclusion or action..." oninput="saveIdsField('${iss.id}','idsSolve',this.value)">${escH(iss.idsSolve||'')}</textarea>
+          </div>
+        </div>
+        <div style="margin-top:10px;padding:8px 12px;background:#fef9ee;border-radius:7px;font-size:12px;color:#92400e;border:1px solid #fde68a">
+          <strong>P1.8:</strong> Solve requires a Decision text OR Owner + Due date on the to-do.
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-success btn-sm" onclick="solveIssueWithIDS('${iss.id}')">✓ Solve + Create To-Do</button>
+          <button class="btn btn-sm" style="background:#e2e8f0;color:#374151;font-weight:600" onclick="solveIssueDecisionOnly('${iss.id}')">✓ Decision Only</button>
+          <button class="btn btn-secondary btn-sm" onclick="quickAddTodoFromIssue('${iss.id}')">+ To-Do Only</button>
+        </div>
+      `;
+      container.appendChild(panel);
+    }
+  });
+
+  // Meeting issues list (for meeting section)
+  renderMeetingIssues();
+}
+
+function renderMeetingIssues() {
+  const team = getTeam(); if (!team) return;
+  const container = document.getElementById('meetingIssuesList');
+  const open = (team.issues||[]).filter(i=>!i.solved);
+  if (!container) return;
+  if (!open.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-sub">No open issues — add one above</div></div>';
+    return;
+  }
+  container.innerHTML = '';
+  open.forEach((iss, idx) => {
+    const who = team.members.find(m=>m.id===iss.who);
+    const div = document.createElement('div');
+    div.className = 'issue-card';
+    div.innerHTML = `
+      <div class="issue-priority">${idx+1}</div>
+      <div class="issue-text"><strong>${escH(iss.text)}</strong><div style="font-size:12px;color:#adb5bd">${iss.cat||''} ${who?'• '+who.name:''}</div></div>
+      <button class="btn btn-xs btn-success" onclick="solveIssue('${iss.id}');renderMeetingIssues()">✓ Solved</button>
+      <button class="btn btn-xs btn-primary btn-sm" onclick="quickAddTodoFromIssue('${iss.id}')">+ To-Do</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function saveIssue() {
+  const team = getTeam(); if (!team) return;
+  const text = document.getElementById('issueText').value.trim();
+  if (!text) { showToast('Issue text required','warning'); return; }
+  team.issues.push(touch({
+    id:newId('iss'), text, who:document.getElementById('issueWho').value,
+    cat:document.getElementById('issueCat').value, solved:false,
+    votesByMemberId:{}, isPrioritized:false, priorityRank:null,
+    createdInMeetingId:ensureMeeting(), createdAt:nowIso(),
+  }));
+  document.getElementById('issueText').value='';
+  saveData(); closeModal('addIssueModal'); renderIssues(); updateBadges();
+  showToast('Issue added!','success');
+}
+
+function solveIssue(id){
+  const team=getTeam(); if(!team) return;
+  const iss=team.issues.find(x=>x.id===id); if(!iss) return;
+  if(!iss.idsSolve&&!iss.idsOwner){ showToast('Tip: add a decision in the IDS panel for a complete record.','warning'); }
+  iss.solved=true; iss.solvedAt=Date.now(); iss.solvedBy=appData.currentUser;
+  iss.solvedInMeetingId=ensureMeeting(); iss.resolvedAt=nowIso();
+  iss.isPrioritized=false; iss.priorityRank=null; touch(iss);
+  if(currentDiscussingId===id) currentDiscussingId=null;
+  saveData(); renderIssues(); renderMeetingIssues(); updateBadges();
+  showToast('Issue marked as solved ✓','success');
+}
+
+function raiseIssueFromTodo(todoId){
+  const team=getTeam(); if(!team) return;
+  const t=team.todos.find(x=>x.id===todoId); if(!t) return;
+  team.issues.push(touch({id:newId('iss'),text:'To-do not done: '+t.task,who:t.owner||'',cat:'Accountability',
+    solved:false,votesByMemberId:{},votes:0,isPrioritized:false,priorityRank:null,
+    sourceType:'todo',sourceId:todoId,createdInMeetingId:ensureMeeting(),createdAt:nowIso()}));
+  saveData(); renderIssues(); updateBadges(); showToast('Raised as Issue!','success');
+}
+
+function raiseIssueFromHeadline(hlId){
+  const team=getTeam(); if(!team) return;
+  const h=team.headlines.find(x=>x.id===hlId); if(!h) return;
+  team.issues.push(touch({id:newId('iss'),text:'Headline: '+h.text.slice(0,100),who:h.who||'',cat:'Customer',
+    solved:false,votesByMemberId:{},votes:0,isPrioritized:false,priorityRank:null,
+    sourceType:'headline',sourceId:hlId,createdInMeetingId:ensureMeeting(),createdAt:nowIso()}));
+  saveData(); renderIssues(); updateBadges(); showToast('Raised as Issue!','success');
+}
+
+let currentDiscussingId = null;
+
+function voteIssue(id, delta) {
+  const team = getTeam(); if(!team) return;
+  const iss = team.issues.find(x=>x.id===id); if(!iss) return;
+  const mem=(team.members||[]).find(m=>m.name.toLowerCase().trim()===(appData.currentUser||'').toLowerCase().trim());
+  const uid=mem?mem.id:'u_'+(appData.currentUser||'anon').replace(/\s/g,'_');
+  if(!iss.votesByMemberId) iss.votesByMemberId={};
+  if(delta>0){ iss.votesByMemberId[uid]=1; }
+  else { delete iss.votesByMemberId[uid]; }
+  // keep legacy votes in sync for old sort code
+  iss.votes=Object.keys(iss.votesByMemberId).length;
+  touch(iss); saveData(); renderIssues(); renderMeetingIssues();
+}
+
+function toggleDiscuss(id) {
+  if (currentDiscussingId === id) {
+    currentDiscussingId = null;
+  } else {
+    currentDiscussingId = id;
+    // Scroll to panel after render
+    setTimeout(() => {
+      const el = document.getElementById('inlineIdsPanel_' + id);
+      if (el) el.scrollIntoView({behavior:'smooth', block:'nearest'});
+    }, 60);
+  }
+  renderIssues();
+}
+
+function saveIdsField(id, field, value) {
+  const team = getTeam(); if (!team) return;
+  const iss = team.issues.find(x=>x.id===id); if (!iss) return;
+  iss[field] = value;
+  saveData();
+}
+
+function solveIssueWithIDS(id) {
+  const team=getTeam(); if(!team) return;
+  const iss=team.issues.find(x=>x.id===id); if(!iss) return;
+  const hasDec=!!(iss.idsSolve&&iss.idsSolve.trim());
+  const hasTodo=!!(iss.idsOwner&&iss.idsWhen);
+  if(!hasDec&&!hasTodo){
+    showToast('⚠️ Enter a decision OR set owner + due date before solving.','warning'); return;
+  }
+  if(hasDec&&iss.idsOwner&&!iss.idsWhen){
+    showToast('⚠️ To-do requires a due date.','warning'); return;
+  }
+  const mid=ensureMeeting();
+  if(iss.idsOwner&&iss.idsSolve){
+    team.todos.push(touch({
+      id:newId('td'), task:iss.idsSolve.slice(0,120), owner:iss.idsOwner,
+      due:iss.idsWhen||'', notes:'From IDS: '+iss.text.slice(0,80),
+      done:false, fromMeeting:'current', createdInMeetingId:mid, createdAt:nowIso(),
+    }));
+  }
+  iss.solved=true; iss.solvedAt=Date.now(); iss.solvedBy=appData.currentUser;
+  iss.solvedInMeetingId=mid; iss.resolvedAt=nowIso(); iss.decisionText=iss.idsSolve||'';
+  iss.isPrioritized=false; iss.priorityRank=null;
+  touch(iss); currentDiscussingId=null;
+  saveData(); renderIssues(); renderTodos(); renderMeetingIssues(); updateBadges();
+  showToast('Issue solved'+(iss.idsOwner?'+ To-Do created':'')+'!','success');
+}
+
+// P1.8 decision-only solve (no to-do required)
+function solveIssueDecisionOnly(id){
+  const team=getTeam(); if(!team) return;
+  const iss=team.issues.find(x=>x.id===id); if(!iss) return;
+  if(!iss.idsSolve||!iss.idsSolve.trim()){ showToast('⚠️ Enter a decision first.','warning'); return; }
+  const mid=ensureMeeting();
+  iss.solved=true; iss.solvedAt=Date.now(); iss.solvedBy=appData.currentUser;
+  iss.solvedInMeetingId=mid; iss.resolvedAt=nowIso(); iss.decisionText=iss.idsSolve;
+  iss.isPrioritized=false; iss.priorityRank=null;
+  touch(iss); currentDiscussingId=null;
+  saveData(); renderIssues(); renderMeetingIssues(); updateBadges();
+  showToast('Issue resolved (decision only).','success');
+}
+
+// P1.7: prioritize top-3 (facilitator only)
+function togglePrioritize(issId){
+  if(!isFacilitator()){ showToast('Facilitator controls prioritization.','warning'); return; }
+  const team=getTeam(); if(!team) return;
+  const iss=team.issues.find(x=>x.id===issId); if(!iss) return;
+  if(!iss.isPrioritized){
+    const count=(team.issues||[]).filter(i=>i.isPrioritized&&!i.solved).length;
+    if(count>=3){ showToast('Max 3 issues prioritized. Remove one first.','warning'); return; }
+    iss.isPrioritized=true; iss.priorityRank=count+1;
+  } else {
+    iss.isPrioritized=false; iss.priorityRank=null;
+    let rank=1;
+    (team.issues||[]).filter(i=>i.isPrioritized&&!i.solved)
+      .sort((a,b)=>(a.priorityRank||99)-(b.priorityRank||99))
+      .forEach(i=>{ i.priorityRank=rank++; });
+  }
+  touch(iss); saveData(); renderIssues();
+}
+function shiftPriority(issId,delta){
+  if(!isFacilitator()) return;
+  const team=getTeam(); if(!team) return;
+  const pri=(team.issues||[]).filter(i=>i.isPrioritized&&!i.solved).sort((a,b)=>(a.priorityRank||99)-(b.priorityRank||99));
+  const idx=pri.findIndex(i=>i.id===issId);
+  const swap=idx+delta;
+  if(swap<0||swap>=pri.length) return;
+  const tmp=pri[idx].priorityRank; pri[idx].priorityRank=pri[swap].priorityRank; pri[swap].priorityRank=tmp;
+  saveData(); renderIssues();
+}
+
+function editIssue(id) {
+  const team = getTeam(); if (!team) return;
+  const iss = team.issues.find(x=>x.id===id); if (!iss) return;
+  document.getElementById('issueText').value = iss.text;
+  document.getElementById('issueWho').value = iss.who||'';
+  document.getElementById('issueCat').value = iss.cat||'Other';
+  // Save edit ID in a hidden field
+  document.getElementById('issueText').dataset.editId = id;
+  showModal('addIssueModal');
+  // Change button to update
+  document.querySelector('#addIssueModal .btn-primary').textContent = 'Update Issue';
+  document.querySelector('#addIssueModal .btn-primary').onclick = () => updateIssue();
+}
+
+function updateIssue() {
+  const team = getTeam(); if (!team) return;
+  const id = document.getElementById('issueText').dataset.editId;
+  const iss = team.issues.find(x=>x.id===id); if (!iss) return;
+  iss.text = document.getElementById('issueText').value.trim();
+  iss.who = document.getElementById('issueWho').value;
+  iss.cat = document.getElementById('issueCat').value;
+  delete document.getElementById('issueText').dataset.editId;
+  document.querySelector('#addIssueModal .btn-primary').textContent = 'Add Issue';
+  document.querySelector('#addIssueModal .btn-primary').onclick = saveIssue;
+  saveData(); closeModal('addIssueModal'); renderIssues();
+  showToast('Issue updated!','success');
+}
+
+function deleteIssue(id) {
+  confirm2('Delete this issue?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.issues = team.issues.filter(x=>x.id!==id);
+    saveData(); renderIssues(); updateBadges();
+    showToast('Issue deleted');
+  });
+}
+
+function quickAddTodoFromIssue(issueId) {
+  const team = getTeam(); if (!team) return;
+  const iss = team.issues.find(x=>x.id===issueId);
+  if (iss) {
+    document.getElementById('todoTask').value = 'Re: ' + iss.text.slice(0,80);
+    document.getElementById('todoOwner').value = iss.who||'';
+    const d = new Date(); d.setDate(d.getDate()+7);
+    document.getElementById('todoDue').value = d.toISOString().split('T')[0];
+  }
+  showAddTodoModal(true);
+}
+
+// ==============================
+// TO-DOS
+// ==============================
+let showDoneTodos = false;
+function toggleDoneTodos() { showDoneTodos = !showDoneTodos; renderTodos(); }
+
+function renderTodos() {
+  const team = getTeam(); if (!team) return;
+  const filterOwner = document.getElementById('todosFilterOwner').value;
+  let todos = team.todos || [];
+  if (!showDoneTodos) todos = todos.filter(t=>!t.done);
+  if (filterOwner) todos = todos.filter(t=>t.owner===filterOwner);
+
+  const tbody = document.getElementById('todosBody');
+  tbody.innerHTML = '';
+
+  document.getElementById('todosEmpty').style.display = todos.length ? 'none' : 'block';
+
+  const today = new Date().toISOString().split('T')[0];
+  todos.forEach(t => {
+    const owner = team.members.find(m=>m.id===t.owner);
+    const overdue = !t.done && t.due && t.due < today;
+    const tr = document.createElement('tr');
+    tr.className = `todo-row${t.done?' done':''}${overdue?' overdue':''}`;
+    tr.innerHTML = `
+      <td><input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}',this.checked)" style="width:18px;height:18px;accent-color:#ff6b35;cursor:pointer"></td>
+      <td>
+        <div style="font-weight:600;color:#212529">${escH(t.task)}</div>
+        ${t.notes ? `<div style="font-size:12px;color:#6c757d">${escH(t.notes)}</div>` : ''}
+      </td>
+      <td>${owner ? `<span class="avatar" style="background:${owner.color};display:inline-flex;width:24px;height:24px;font-size:10px;margin-right:4px">${initials(owner.name)}</span>${owner.name.split(' ')[0]}` : '—'}</td>
+      <td class="due-date">${t.due ? new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—'}</td>
+      <td style="font-size:12px;color:#adb5bd">${t.fromMeeting||'—'}</td>
+      <td>${t.done ? '<span class="badge badge-green">Done</span>' : overdue ? '<span class="badge badge-red">Overdue</span>' : '<span class="badge badge-blue">Open</span>'}</td>
+      <td>
+        ${!t.done?`<span style="display:inline-flex;align-items:center;gap:2px"><button class="btn btn-xs" style="background:#fff3cd;color:#92400e;border:1px solid #fbbf24" onclick="raiseIssueFromTodo('${t.id}')">⚡ Raise</button><button class="info-btn" onclick="showInfoPopup('raiseissue')" title="What is Raise Issue?">ℹ️</button></span>`:''}
+        <button class="btn btn-xs btn-secondary" onclick="editTodoModal('${t.id}')">✏️</button>
+        <button class="btn btn-xs btn-danger" onclick="deleteTodo('${t.id}')">🗑</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  renderMeetingTodos();
+}
+
+function renderMeetingTodos() {
+  const team = getTeam(); if (!team) return;
+  const container = document.getElementById('meetingTodosList');
+  if (!container) return;
+  const mid=ensureMeeting();
+  const recent = (team.todos||[]).filter(t=>mid?t.createdInMeetingId===mid:t.fromMeeting==='current');
+  if (!recent.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-sub">No to-dos added yet this meeting</div></div>';
+    return;
+  }
+  container.innerHTML = recent.map(t => {
+    const owner = team.members.find(m=>m.id===t.owner);
+    return `<div class="issue-card"><div class="issue-text"><strong>${escH(t.task)}</strong></div>${owner?`<span class="badge badge-gray">${owner.name.split(' ')[0]}</span>`:''}<span class="badge badge-blue">${t.due||'—'}</span></div>`;
+  }).join('');
+}
+
+function showAddTodoModal(fromMeeting) {
+  document.getElementById('todoTask').value='';
+  document.getElementById('todoOwner').value='';
+  document.getElementById('todoNotes').value='';
+  document.getElementById('todoTask').dataset.editId='';
+  document.getElementById('todoTask').dataset.fromMeeting=fromMeeting?'current':'';
+  const d = new Date(); d.setDate(d.getDate()+7);
+  document.getElementById('todoDue').value = d.toISOString().split('T')[0];
+  document.querySelector('#addTodoModal .btn-primary').textContent = 'Add To-Do';
+  document.querySelector('#addTodoModal .btn-primary').onclick = saveTodo;
+  showModal('addTodoModal');
+}
+
+function editTodoModal(id) {
+  const team = getTeam(); if (!team) return;
+  const t = team.todos.find(x=>x.id===id); if (!t) return;
+  document.getElementById('todoTask').value = t.task;
+  document.getElementById('todoOwner').value = t.owner||'';
+  document.getElementById('todoDue').value = t.due||'';
+  document.getElementById('todoNotes').value = t.notes||'';
+  document.getElementById('todoTask').dataset.editId = id;
+  document.querySelector('#addTodoModal .btn-primary').textContent = 'Update To-Do';
+  document.querySelector('#addTodoModal .btn-primary').onclick = updateTodo;
+  showModal('addTodoModal');
+}
+
+function saveTodo() {
+  const team = getTeam(); if (!team) return;
+  const task = document.getElementById('todoTask').value.trim();
+  if (!task) { showToast('Task required','warning'); return; }
+  const fromMeeting = document.getElementById('todoTask').dataset.fromMeeting;
+  team.todos.push(touch({
+    id:newId('td'), task, owner:document.getElementById('todoOwner').value,
+    due:document.getElementById('todoDue').value, notes:document.getElementById('todoNotes').value.trim(),
+    done:false, fromMeeting:fromMeeting||null,
+    createdInMeetingId:(fromMeeting?ensureMeeting():null), createdAt:nowIso(),
+  }));
+  saveData(); closeModal('addTodoModal'); renderTodos(); updateBadges();
+  showToast('To-do added!','success');
+}
+
+function updateTodo() {
+  const team = getTeam(); if (!team) return;
+  const id = document.getElementById('todoTask').dataset.editId;
+  const t = team.todos.find(x=>x.id===id); if (!t) return;
+  t.task = document.getElementById('todoTask').value.trim();
+  t.owner = document.getElementById('todoOwner').value;
+  t.due = document.getElementById('todoDue').value;
+  t.notes = document.getElementById('todoNotes').value.trim();
+  saveData(); closeModal('addTodoModal'); renderTodos();
+  showToast('To-do updated!','success');
+}
+
+function toggleTodo(id, done) {
+  const team = getTeam(); if (!team) return;
+  const t = team.todos.find(x=>x.id===id);
+  if (t) { t.done=done; t.doneAt=done?Date.now():null; t.doneBy=done?appData.currentUser:null; }
+  saveData(); renderTodos(); updateBadges();
+}
+
+function deleteTodo(id) {
+  confirm2('Delete this to-do?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.todos = team.todos.filter(x=>x.id!==id);
+    saveData(); renderTodos(); updateBadges();
+  });
+}
+
+// ==============================
+// HEADLINES
+// ==============================
+function renderHeadlines() {
+  const team = getTeam(); if (!team) return;
+  const items = team.headlines || [];
+
+  const custGood = items.filter(h=>h.type==='customer-good');
+  const custBad = items.filter(h=>h.type==='customer-bad');
+  const empGood = items.filter(h=>h.type==='employee-good');
+  const empBad = items.filter(h=>h.type==='employee-bad');
+  const customer = [...custGood, ...custBad].sort((a,b)=>b.created-a.created);
+  const employee = [...empGood, ...empBad].sort((a,b)=>b.created-a.created);
+
+  renderHeadlineList('customerHeadlines','customerHeadlinesEmpty', customer, team);
+  renderHeadlineList('employeeHeadlines','employeeHeadlinesEmpty', employee, team);
+}
+
+function renderHeadlineList(containerId, emptyId, items, team) {
+  const c = document.getElementById(containerId);
+  const e = document.getElementById(emptyId);
+  c.innerHTML = '';
+  e.style.display = items.length ? 'none' : 'block';
+  items.forEach(h => {
+    const who = team.members.find(m=>m.id===h.who);
+    const icon = h.type.includes('good') ? '✅' : '⚠️';
+    const div = document.createElement('div');
+    div.className = 'headline-item';
+    div.innerHTML = `
+      <div class="headline-icon">${icon}</div>
+      <div class="headline-text">
+        <div class="headline-date">${h.date ? new Date(h.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''} ${who?'• '+who.name:''}</div>
+        <div class="headline-msg">${escH(h.text)}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-xs" style="background:#fff3cd;color:#92400e;border:1px solid #fbbf24" title="Raise as Issue" onclick="raiseIssueFromHeadline('${h.id}')">⚡</button>
+      <button class="btn btn-xs btn-danger" onclick="deleteHeadline('${h.id}')">🗑</button>
+      </div>
+    `;
+    c.appendChild(div);
+  });
+}
+
+function saveHeadline() {
+  const team = getTeam(); if (!team) return;
+  const text = document.getElementById('headlineText').value.trim();
+  if (!text) { showToast('Headline text required','warning'); return; }
+  team.headlines.push({
+    id:'hl_'+Date.now(), text, type:document.getElementById('headlineType').value,
+    who:document.getElementById('headlineWho').value, date:document.getElementById('headlineDate').value,
+    created:Date.now()
+  });
+  saveData(); closeModal('addHeadlineModal'); renderHeadlines();
+  showToast('Headline added!','success');
+}
+
+function deleteHeadline(id) {
+  confirm2('Delete this headline?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.headlines = team.headlines.filter(x=>x.id!==id);
+    saveData(); renderHeadlines();
+  });
+}
+
+// ==============================
+// HISTORY
+// ==============================
+function renderHistory() {
+  const team = getTeam(); if (!team) return;
+  const history = [...(team.history||[])].reverse();
+  const from = document.getElementById('historyFrom').value;
+  const to = document.getElementById('historyTo').value;
+  const filtered = history.filter(h => {
+    if (from && h.date < from) return false;
+    if (to && h.date > to) return false;
+    return true;
+  });
+
+  const container = document.getElementById('historyList');
+  container.innerHTML = '';
+  document.getElementById('historyEmpty').style.display = filtered.length ? 'none' : 'block';
+
+  // Stats
+  if (history.length) {
+    const avgRating = (history.reduce((s,h)=>s+h.rating,0)/history.length).toFixed(1);
+    document.getElementById('historyStats').innerHTML = `
+      <div class="card"><div class="card-title">Meetings Held</div><div class="card-value">${history.length}</div></div>
+      <div class="card"><div class="card-title">Avg Rating</div><div class="card-value">${avgRating}/10</div></div>
+      <div class="card"><div class="card-title">Issues Solved</div><div class="card-value">${history.reduce((s,h)=>s+(h.issuesSolved||0),0)}</div></div>
+    `;
+  } else {
+    document.getElementById('historyStats').innerHTML = '';
+  }
+
+  filtered.forEach(h => {
+    const div = document.createElement('div');
+    div.className = 'history-card';
+    div.onclick = () => div.classList.toggle('open');
+    const ratingColor = h.rating>=8?'#28a745':h.rating>=6?'#ffc107':'#dc3545';
+    div.innerHTML = `
+      <div class="flex-between">
+        <div>
+          <div style="font-weight:800;font-size:16px">${new Date(h.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
+          <div class="history-meta">${h.duration||0} min • ${h.todosClosed||0} to-dos closed • ${h.issuesSolved||0} issues solved • Led by ${h.ledBy||'—'}</div>
+        </div>
+        <div class="history-rating" style="color:${ratingColor}">${h.rating}/10</div>
+      </div>
+      <div class="history-detail">
+        ${h.recap ? `<div style="margin-bottom:10px"><strong>Recap:</strong> ${escH(h.recap)}</div>` : ''}
+        ${h.notes ? `<div style="margin-bottom:10px"><strong>Notes:</strong><br><span style="font-size:13px;color:#6c757d;white-space:pre-wrap">${escH(h.notes)}</span></div>` : ''}
+        ${h.issuesSolvedList&&h.issuesSolvedList.length ? `<div><strong>Issues Resolved:</strong><ul style="margin-top:6px;padding-left:18px;font-size:13px">${h.issuesSolvedList.map(i=>`<li>${escH(i)}</li>`).join('')}</ul></div>` : ''}
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function exportHistory() {
+  const team = getTeam(); if (!team) return;
+  const rows = [['Date','Rating','Duration (min)','Notes','Issues Solved','To-Dos Closed','Led By']];
+  (team.history||[]).forEach(h => {
+    rows.push([h.date, h.rating, h.duration||0, (h.notes||'').replace(/,/g,''), h.issuesSolved||0, h.todosClosed||0, h.ledBy||'']);
+  });
+  const csv = rows.map(r=>r.join(',')).join('\n');
+  downloadFile(csv, 'eos_l10_history.csv', 'text/csv');
+}
+
+// ==============================
+// MEETING / TIMER
+// ==============================
+const AGENDA_SECTIONS = [
+  {name:'Segue', label:'Segue — Good News', duration:5*60, key:'segue',
+   icon:'💬', desc:'Each team member shares one personal win and one professional win from the past week. Keep it brief and positive — this reconnects the team before diving into business.'},
+  {name:'Scorecard™', label:'Scorecard Review', duration:5*60, key:'scorecard',
+   icon:'📈', desc:'Review each metric: On Track or Off Track. No explanations — just the numbers. If a metric is off track, drop it to the Issues List for IDS. No discussion here.'},
+  {name:'Rock Review', label:'Rock Review', duration:5*60, key:'rocks',
+   icon:'💎', desc:'Each Rock owner reports: On Track or Off Track. No deep dives. If a Rock is off track or needs discussion, add it to the Issues List.'},
+  {name:'Headlines', label:'Customer & Employee Headlines', duration:5*60, key:'headlines',
+   icon:'📢', desc:'Share 1–2 sentence updates about customers or employees — good or bad. If it takes more than 2 sentences, drop it to Issues.'},
+  {name:'To-do List', label:'To-Do List Review', duration:5*60, key:'todos',
+   icon:'✅', desc:'Review every to-do from last week: Done or Not Done. No excuses. Undone items that need discussion go to Issues.'},
+  {name:'IDS', label:'IDS — Identify, Discuss, Solve', duration:60*60, key:'ids',
+   icon:'⚡', desc:'The core 60 minutes. Work through the Issues List top-down (highest votes first). For each issue: Identify the root cause, Discuss openly, then Solve with a clear decision or to-do assigned to one owner.'},
+  {name:'Conclude', label:'Conclude — Rate & Recap', duration:5*60, key:'conclude',
+   icon:'🏁', desc:'Recap new to-dos, identify any messages to cascade to the broader team, and rate the meeting 1–10. Aim for 8+. If below 8, discuss what would have made it better.'},
+];
+
+// Section content definitions
+const SECTION_CONTENT = {
+  segue: () => {
+    const team = getTeam(); if (!team) return '';
+    const members = team.members || [];
+    const att = team.meetingAttendance || {};
+    return `
+    <div class="section-info-card">
+      <div class="section-info-icon">💬</div>
+      <div><div class="section-info-title">Segue — Good News</div>
+      <div class="section-info-desc">Each team member shares one personal and one professional win from the past week. Keep it brief, positive, and human.</div></div>
+    </div>
+
+    <div style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:12px;padding:18px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:12px">👥 Attendance</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px" id="attendanceGrid">
+        ${members.length ? members.map(m => {
+          const status = att[m.id] || 'present';
+          const colors = {present:'#22c55e',absent:'#ef4444',remote:'#f59e0b'};
+          const labels = {present:'Present',absent:'Absent',remote:'Remote'};
+          return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:white;border-radius:9px;border:2px solid ${status==='present'?'#bbf7d0':status==='absent'?'#fecaca':'#fde68a'}">
+            <span class="avatar" style="background:${m.color};width:30px;height:30px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-weight:700;color:white">${initials(m.name)}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escH(m.name)}</div>
+              <select onchange="setAttendance('${m.id}',this.value)" style="font-size:11px;border:none;background:transparent;color:${colors[status]};font-weight:700;cursor:pointer;padding:0;margin-top:1px">
+                <option value="present" ${status==='present'?'selected':''}>✓ Present</option>
+                <option value="remote" ${status==='remote'?'selected':''}>📡 Remote</option>
+                <option value="absent" ${status==='absent'?'selected':''}>✗ Absent</option>
+              </select>
+            </div>
+          </div>`;
+        }).join('') : '<div style="color:#94a3b8;font-size:13px">No team members yet — add them in Settings.</div>'}
+      </div>
+    </div>
+
+    <div class="note-box"><strong>💡 Segue Tip:</strong> Go around quickly. Don't allow tangents — if it sparks an issue, note it for IDS. The goal is connection, not discussion.</div>`;
+  },
+
+  scorecard: () => {
+    const team = getTeam(); if (!team) return '';
+    const week = team.currentWeek || 3;
+    const metrics = team.metrics || [];
+    if (!metrics.length) return `<div class="empty-state"><div class="empty-state-icon">📈</div><div class="empty-state-msg">No scorecard metrics yet</div><div class="empty-state-sub">Add metrics in the Scorecard tab first</div></div>`;
+    return `
+      <div class="section-info-card">
+        <div class="section-info-icon">📈</div>
+        <div><div class="section-info-title">Scorecard Review — Week ${week}</div>
+        <div class="section-info-desc">Each owner reports On Track or Off Track. No explanations. Off-track items drop to Issues.</div></div>
+      </div>
+      <div style="margin-top:4px">
+        ${metrics.map(m => {
+          const owner = team.members.find(x=>x.id===m.owner);
+          const val = (team.scorecardData[m.id]||{})[week];
+          const hasVal = val !== undefined && val !== '';
+          const numVal = parseFloat(val);
+          const numGoal = parseFloat(m.goal);
+          const onTrack = !hasVal ? null : (m.direction==='lte' ? numVal <= numGoal : numVal >= numGoal);
+          return `<div class="issue-card" style="margin-bottom:8px">
+            <div class="issue-text">
+              <div style="font-weight:700">${escH(m.name)}</div>
+              <div style="font-size:12px;color:#adb5bd">${owner?owner.name:''} • Goal: ${m.goal}</div>
+            </div>
+            <span class="badge ${onTrack===null?'badge-gray':onTrack?'badge-green':'badge-red'}">${onTrack===null?'—':onTrack?'✓ On Track':'✗ Off Track'}</span>
+            ${onTrack===false?`<button class="btn btn-xs btn-secondary" onclick="addIssueFromScorecard('${m.id}')">→ Issues</button>`:''}
+          </div>`;
+        }).join('')}
+      </div>`;
+  },
+
+  rocks: () => {
+    const team = getTeam(); if (!team) return '';
+    const rocks = team.rocks || [];
+    if (!rocks.length) return `<div class="empty-state"><div class="empty-state-icon">💎</div><div class="empty-state-msg">No rocks this quarter</div><div class="empty-state-sub">Add rocks in the Rocks tab</div></div>`;
+    return `
+      <div class="section-info-card">
+        <div class="section-info-icon">💎</div>
+        <div><div class="section-info-title">Rock Review</div>
+        <div class="section-info-desc">On Track or Off Track only. No deep dives. Off-track → Issues List.</div></div>
+      </div>
+      ${rocks.map(r => {
+        const owner = team.members.find(x=>x.id===r.owner);
+        return `<div class="issue-card" style="margin-bottom:8px">
+          <div class="issue-text">
+            <div style="font-weight:700">${escH(r.title)}</div>
+            <div style="font-size:12px;color:#adb5bd">${owner?owner.name:''} • ${r.progress||0}% complete</div>
+          </div>
+          <span class="badge badge-${r.status==='on-track'?'green':r.status==='complete'?'gray':'red'}">${r.status==='on-track'?'✓ On Track':r.status==='complete'?'Complete':'✗ Off Track'}</span>
+          ${r.status==='off-track'?`<button class="btn btn-xs btn-secondary" onclick="addIssueFromRock('${r.id}')">→ Issues</button>`:''}
+        </div>`;
+      }).join('')}`;
+  },
+
+  headlines: () => {
+    const team = getTeam(); if (!team) return '';
+    const items = (team.headlines||[]).sort((a,b)=>b.created-a.created).slice(0,8);
+    return `
+      <div class="section-info-card">
+        <div class="section-info-icon">📢</div>
+        <div><div class="section-info-title">Customer & Employee Headlines</div>
+        <div class="section-info-desc">1–2 sentence updates only. Good news celebrated, concerns dropped to Issues.</div></div>
+      </div>
+      ${items.length ? items.map(h => {
+        const who = team.members.find(m=>m.id===h.who);
+        const icon = h.type.includes('good') ? '✅' : '⚠️';
+        return `<div class="headline-item">${icon} <div class="headline-text"><div class="headline-msg">${escH(h.text)}</div><div class="headline-date">${h.date||''} ${who?'• '+who.name:''}</div></div></div>`;
+      }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-state-sub">No headlines yet — add them in the Headlines tab</div></div>'}
+      <div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="showModal('addHeadlineModal')">+ Add Headline</button></div>`;
+  },
+
+  todos: () => {
+    const team = getTeam(); if (!team) return '';
+    const today = new Date().toISOString().split('T')[0];
+    const todos = (team.todos||[]).filter(t=>!t.done).sort((a,b)=>(a.due||'').localeCompare(b.due||''));
+    return `
+      <div class="section-info-card">
+        <div class="section-info-icon">✅</div>
+        <div><div class="section-info-title">To-Do List Review</div>
+        <div class="section-info-desc">Review each open to-do: Done or Not Done. No excuses. Undone items needing discussion → Issues.</div></div>
+      </div>
+      ${todos.length ? todos.map(t => {
+        const owner = team.members.find(m=>m.id===t.owner);
+        const overdue = t.due && t.due < today;
+        return `<div class="issue-card" style="margin-bottom:8px;${overdue?'border-left-color:#dc3545':''}">
+          <input type="checkbox" onchange="toggleTodo('${t.id}',this.checked)" style="width:18px;height:18px;accent-color:#ff6b35;cursor:pointer;flex-shrink:0">
+          <div class="issue-text">
+            <div style="font-weight:600">${escH(t.task)}</div>
+            <div style="font-size:12px;color:${overdue?'#dc3545':'#adb5bd'}">${owner?owner.name:'—'} • Due: ${t.due||'—'}${overdue?' ⚠️ Overdue':''}</div>
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty-state" style="padding:20px"><div class="empty-state-icon" style="font-size:28px">🎉</div><div class="empty-state-sub">No open to-dos! Great work.</div></div>'}
+      <div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="showAddTodoModal(true)">+ Add To-Do</button></div>`;
+  },
+
+  ids: () => {
+    const team = getTeam(); if (!team) return '';
+    const open = (team.issues||[]).filter(i=>!i.solved).sort((a,b)=>(b.votes||0)-(a.votes||0)||a.created-b.created);
+    return `
+      <div class="section-info-card" style="background:#fff8f5;border-color:#ffd5c3">
+        <div class="section-info-icon">⚡</div>
+        <div><div class="section-info-title"><strong style="color:#c9400a">I</strong>dentify · <strong style="color:#c9400a">D</strong>iscuss · <strong style="color:#c9400a">S</strong>olve</div>
+        <div class="section-info-desc">Identify the real root cause &nbsp;•&nbsp; Discuss openly, all voices &nbsp;•&nbsp; Solve with a clear to-do or decision</div></div>
+      </div>
+      <div class="flex-between" style="margin-bottom:12px">
+        <div>
+          <div style="font-weight:700;font-size:14px">${(team.issues||[]).filter(i=>!i.solved).length} Open Issues</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">Vote → Facilitator prioritizes top 3 → IDS them in order</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="showModal('addIssueModal')">+ Add Issue</button>
+      </div>
+      <div id="meetingIssuesList2"></div>`;
+  },
+
+  conclude: () => {
+    const team = getTeam(); if (!team) return '';
+    const members = team.members || [];
+    const att = team.meetingAttendance || {};
+    const attendees = members.filter(m => att[m.id] !== 'absent');
+    return `
+    <div class="section-info-card">
+      <div class="section-info-icon">🏁</div>
+      <div><div class="section-info-title">Conclude the Meeting</div>
+      <div class="section-info-desc">Each attendee rates the meeting 1–10 and gives a brief reason. Aim for 8+. If below 8, discuss what would have made it better. Recap any cascade messages below.</div></div>
+    </div>
+
+    <div style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:12px;padding:18px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:14px">⭐ Meeting Ratings — <span id="avgRatingDisplay" style="color:#ff6b35">—</span> avg</div>
+      <div style="display:flex;flex-direction:column;gap:10px" id="ratingsGrid">
+        ${attendees.length ? attendees.map(m => {
+          const r = (team.memberRatings||{})[m.id] || {score:8,reason:''};
+          return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:white;border-radius:9px;border:2px solid #e2e8f0">
+            <span class="avatar" style="background:${m.color};width:30px;height:30px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-weight:700;color:white">${initials(m.name)}</span>
+            <div style="font-weight:600;font-size:13px;min-width:120px">${escH(m.name)}</div>
+            <input type="range" min="1" max="10" value="${r.score}" style="width:100px;accent-color:#ff6b35" 
+              oninput="saveMemberRating('${m.id}','score',this.value);this.nextElementSibling.textContent=this.value+'/10'">
+            <span style="font-size:14px;font-weight:800;color:#ff6b35;min-width:36px">${r.score}/10</span>
+            <input type="text" placeholder="Why this score?" value="${escH(r.reason)}" 
+              style="flex:1;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:12px;font-family:inherit"
+              oninput="saveMemberRating('${m.id}','reason',this.value)">
+          </div>`;
+        }).join('') : '<div style="color:#94a3b8;font-size:13px">No attendees marked. Check attendance in the Segue section.</div>'}
+      </div>
+    </div>
+
+    <div style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:12px;padding:18px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:10px">📋 To-Dos Created This Meeting</div>
+      <div id="meetingTodosInline"></div>
+    </div>`;
+  },
+};
+
+let timerState = {
+  running: false,
+  sectionIdx: 0,
+  secondsElapsed: 0,
+  sectionSecondsLeft: AGENDA_SECTIONS[0].duration,
+  interval: null,
+  meetingStarted: false,
+  actualTimes: [],
+  meetingStartTime: null,
+  meetingId: null,        // P0.3
+  meetingStartIso: null,  // P1.1
+  sectionStartedAt: null, // Fix8: wall-clock time when current section started
+};
+const TOTAL_MEETING_SECS = AGENDA_SECTIONS.reduce((s,x)=>s+x.duration,0); // 5400
+
+function startMeeting() {
+  const team = getTeam(); if (!team) return;
+  const mid = newId('mtg');
+  timerState.meetingId = mid;
+  timerState.meetingStarted = true;
+  timerState.sectionIdx = 0;
+  timerState.secondsElapsed = 0;
+  timerState.sectionSecondsLeft = AGENDA_SECTIONS[0].duration;
+  timerState.actualTimes = [];
+  timerState.meetingStartTime = new Date();
+  timerState.meetingStartIso = nowIso();
+  timerState.sectionStartedAt = Date.now(); // Fix8
+  // P1.1: persist snapshot so refresh can recover
+  team.activeMeeting = {
+    meetingId: mid, startAt: timerState.meetingStartIso,
+    facilitatorMemberId: team.lastFacilitator||null,
+    scribeMemberId: team.lastScribe||null,
+    attendees: (team.members||[]).map(m=>m.id),
+  };
+  // clear stale fromMeeting flags
+  (team.todos||[]).forEach(t=>{ if(t.fromMeeting==='current') t.fromMeeting=null; });
+  document.getElementById('concludeBtn').style.display = '';
+  document.getElementById('meetingDateLabel').textContent = 'Started: ' + timerState.meetingStartTime.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  updateTimerUI(); renderSidebarAgenda(); renderMeetingContent(); saveData();
+}
+
+function updateTimerUI() {
+  const sec = timerState.sectionSecondsLeft;
+  const sIdx = timerState.sectionIdx;
+  const section = AGENDA_SECTIONS[sIdx];
+  const circumference = 2 * Math.PI * 48; // 301.59
+
+  // Arc: fills as section time passes
+  const sectionPct = 1 - (sec / section.duration);
+  const offset = circumference * (1 - sectionPct);
+  const arcEl = document.getElementById('arcFill');
+  if (arcEl) {
+    arcEl.style.strokeDashoffset = offset;
+    arcEl.className = 'arc-fill' + (sec <= 30 && sec > 0 ? ' warning' : sec <= 0 ? ' overrun' : '');
+  }
+
+  // Elapsed counter
+  const elapsed = timerState.secondsElapsed;
+  document.getElementById('arcElapsed').textContent = formatTime(elapsed);
+  document.getElementById('arcTotal').textContent = '/ ' + formatTime(TOTAL_MEETING_SECS);
+
+  // Section status dot color on sidebar
+  renderSidebarDots();
+
+  // Content header time
+  const contentTime = document.getElementById('contentSectionTime');
+  if (contentTime) contentTime.textContent = formatTime(Math.max(0, sec)) + ' remaining';
+
+  // Sidebar start button
+  const btn = document.getElementById('sidebarStartBtn');
+  if (btn) {
+    if (timerState.running) {
+      btn.textContent = '⏸ Pause';
+      btn.className = 'sidebar-start-btn running';
+      btn.onclick = timerPause;
+    } else {
+      btn.textContent = timerState.meetingStarted ? '▶ Resume' : '▶ Start meeting';
+      btn.className = 'sidebar-start-btn';
+      btn.onclick = timerStart;
+    }
+  }
+  const statusEl = document.getElementById('sidebarStatus');
+  if (statusEl) statusEl.textContent = timerState.running ? 'RUNNING' : timerState.meetingStarted ? 'PAUSED' : 'READY';
+}
+
+function renderSidebarDots() {
+  // Update dot colors and live countdown without full re-render
+  const items = document.querySelectorAll('.sag-item');
+  items.forEach((item, i) => {
+    const dot = item.querySelector('.sag-dot');
+    const timeEl = item.querySelector('.sag-time');
+    const isCurrent = i === timerState.sectionIdx;
+    const isDone = i < timerState.sectionIdx;
+    if (dot) {
+      if (isDone) dot.className = 'sag-dot green';
+      else if (isCurrent) {
+        const sec = timerState.sectionSecondsLeft;
+        dot.className = 'sag-dot' + (sec <= 30 && sec > 0 ? ' yellow' : sec <= 0 ? ' red' : ' green');
+      } else dot.className = 'sag-dot';
+    }
+    if (timeEl && isCurrent) {
+      const sec = Math.max(0, timerState.sectionSecondsLeft);
+      timeEl.innerHTML = `<span style="color:#ff6b35;font-weight:700">${formatTime(sec)}</span>`;
+    }
+  });
+}
+
+function timerStart() {
+  if (!timerState.meetingStarted) startMeeting();
+  if (timerState.running) return;
+  // Fix8: if resuming after pause, adjust sectionStartedAt to exclude paused time
+  if(timerState.sectionStartedAt === null) {
+    timerState.sectionStartedAt = Date.now();
+  } else {
+    // shift startedAt forward by the paused duration so elapsed stays accurate
+    const alreadyElapsed = timerState.actualTimes[timerState.sectionIdx] || 0;
+    timerState.sectionStartedAt = Date.now() - (alreadyElapsed * 1000);
+  }
+  timerState.running = true;
+  timerState.interval = setInterval(() => {
+    timerState.sectionSecondsLeft--;
+    timerState.secondsElapsed++;
+    updateTimerUI();
+  }, 1000);
+}
+
+function timerPause() {
+  timerState.running = false;
+  clearInterval(timerState.interval);
+  updateTimerUI();
+}
+
+function recordSectionTime() {
+  // Fix8: use wall-clock timestamps for accuracy
+  if(timerState.sectionStartedAt !== null) {
+    const elapsed = Math.floor((Date.now() - timerState.sectionStartedAt) / 1000);
+    timerState.actualTimes[timerState.sectionIdx] = elapsed;
+  }
+}
+
+function timerNextSection() {
+  if(!isFacilitator()){ showToast('Facilitator controls the agenda.','warning'); return; }
+  recordSectionTime(); // Fix8: log actual time BEFORE pausing
+  timerPause();
+
+  if (timerState.sectionIdx < AGENDA_SECTIONS.length - 1) {
+    timerState.sectionIdx++;
+    timerState.sectionSecondsLeft = AGENDA_SECTIONS[timerState.sectionIdx].duration;
+    timerState.sectionStartedAt = Date.now(); // Fix8: reset clock for new section
+  }
+
+  updateTimerUI();
+  renderSidebarAgenda();
+  renderMeetingContent();
+}
+
+function jumpToSection(idx) {
+  if(!timerState.meetingStarted) return;
+  if(!isFacilitator()){ showToast('Facilitator controls the agenda.','warning'); return; }
+  recordSectionTime(); // Fix8: log actual time for section being left
+  timerPause();
+  timerState.sectionIdx = idx;
+  timerState.sectionSecondsLeft = AGENDA_SECTIONS[idx].duration;
+  timerState.sectionStartedAt = Date.now(); // Fix8: reset clock for destination section
+  updateTimerUI();
+  renderSidebarAgenda();
+  renderMeetingContent();
+}
+
+function renderSidebarAgenda() {
+  const ul = document.getElementById('sidebarAgenda');
+  if (!ul) return;
+  ul.innerHTML = '';
+  AGENDA_SECTIONS.forEach((s, i) => {
+    const li = document.createElement('li');
+    const isCurrent = i === timerState.sectionIdx;
+    const isDone = i < timerState.sectionIdx;
+    li.className = `sag-item${isCurrent?' active':''}${isDone?' done':''}`;
+    li.onclick = () => jumpToSection(i);
+    const actual = timerState.actualTimes[i];
+    // Show actual time for done sections, countdown for current, allocated for future
+    let timeDisplay;
+    if (isDone && actual !== undefined) {
+      timeDisplay = `<span style="color:#22c55e;font-weight:700">${formatTime(actual)}</span>`;
+    } else if (isCurrent) {
+      timeDisplay = `<span style="color:#ff6b35;font-weight:700">${formatTime(Math.max(0,timerState.sectionSecondsLeft))}</span>`;
+    } else {
+      timeDisplay = formatTime(s.duration);
+    }
+    li.innerHTML = `
+      <span class="sag-dot${isCurrent?' green':''}"></span>
+      <span class="sag-name">${s.name}</span>
+      <span class="sag-time">${timeDisplay}</span>
+    `;
+    ul.appendChild(li);
+  });
+}
+
+function renderMeetingContent() {
+  if (!getTeam()) return;
+  const sIdx = timerState.sectionIdx;
+  const section = AGENDA_SECTIONS[sIdx];
+
+  const titleEl = document.getElementById('contentSectionTitle');
+  if (titleEl) titleEl.textContent = section.label;
+
+  const body = document.getElementById('meetingContentBody');
+  if (!body) return;
+
+  // Show conclude bar only when in Conclude section
+  const cbar = document.getElementById('concludeBar');
+  if (cbar) cbar.style.display = section.key === 'conclude' ? '' : 'none';
+
+  const fn = SECTION_CONTENT[section.key];
+  body.innerHTML = fn ? fn() : '';
+
+  if (section.key === 'ids') { renderMeetingIssuesInline(); }
+  if (section.key === 'conclude') { renderMeetingTodosInline(); }
+  // P1.6: always refresh notes list
+  setTimeout(renderMeetingNotesList, 0);
+}
+
+function renderMeetingIssuesInline() {
+  const team = getTeam(); if (!team) return;
+  const container = document.getElementById('meetingIssuesList2');
+  if (!container) return;
+  const open = (team.issues||[]).filter(i=>!i.solved).sort((a,b)=>(b.votes||0)-(a.votes||0)||a.created-b.created);
+  if (!open.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-sub">No open issues — great work, or add one above!</div></div>';
+    return;
+  }
+  container.innerHTML = '';
+  open.forEach((iss, idx) => {
+    const who = team.members.find(m=>m.id===iss.who);
+    const votes = iss.votes || 0;
+    const isDiscussing = currentDiscussingId === iss.id;
+    const div = document.createElement('div');
+    div.className = `issue-card${isDiscussing?' discussing':''}`;
+    div.innerHTML = `
+      <div class="issue-priority">${idx+1}</div>
+      <div class="issue-text">
+        <div style="font-weight:600">${escH(iss.text)}</div>
+        <div style="font-size:12px;color:#adb5bd">${iss.cat||''} ${who?'• '+who.name:''}</div>
+      </div>
+      <span class="badge badge-${isDiscussing?'orange':'blue'}">${isDiscussing?'Discussing':'Open'}</span>
+      <button class="btn btn-xs btn-${isDiscussing?'secondary':'primary'}" onclick="toggleDiscussMeeting('${iss.id}')">${isDiscussing?'▼ Hide':'▶ Discuss'}</button>
+      <button class="btn btn-xs btn-success" onclick="solveIssue('${iss.id}');renderMeetingContent()">✓ Solved</button>
+    `;
+    container.appendChild(div);
+    if (isDiscussing) {
+      const panel = document.createElement('div');
+      panel.className = 'ids-panel';
+      const memberOptions = (getTeam()&&getTeam().members||[]).map(m=>`<option value="${m.id}" ${iss.idsOwner===m.id?'selected':''}>${escH(m.name)}</option>`).join('');
+      panel.innerHTML = `
+        <div class="ids-badge-discussing">▶ IDS IN PROGRESS</div>
+        <div class="ids-panel-issue">"${escH(iss.text)}"</div>
+        <div class="ids-fields">
+          <div class="ids-field" style="grid-column:1/-1">
+            <label>🔍 IDENTIFY — Real root cause</label>
+            <textarea placeholder="What is the real issue, not just the symptom?" oninput="saveIdsField('${iss.id}','idsIdentify',this.value)">${escH(iss.idsIdentify||'')}</textarea>
+          </div>
+          <div class="ids-field">
+            <label>👤 WHO owns this?</label>
+            <select onchange="saveIdsField('${iss.id}','idsOwner',this.value)">
+              <option value="">— Select owner —</option>${memberOptions}
+            </select>
+          </div>
+          <div class="ids-field">
+            <label>📅 BY WHEN?</label>
+            <input type="date" value="${iss.idsWhen||''}" oninput="saveIdsField('${iss.id}','idsWhen',this.value)">
+          </div>
+          <div class="ids-field" style="grid-column:1/-1">
+            <label>💡 SOLVE — Agreed solution</label>
+            <textarea placeholder="Clear decision or action..." oninput="saveIdsField('${iss.id}','idsSolve',this.value)">${escH(iss.idsSolve||'')}</textarea>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn btn-success btn-sm" onclick="solveIssueWithIDS('${iss.id}');renderMeetingContent()">✓ Solved + Create To-Do</button>
+          <button class="btn btn-secondary btn-sm" onclick="quickAddTodoFromIssue('${iss.id}')">+ To-Do Only</button>
+        </div>`;
+      container.appendChild(panel);
+    }
+  });
+}
+
+function renderMeetingTodosInline() {
+  const team = getTeam(); if (!team) return;
+  const container = document.getElementById('meetingTodosInline');
+  if (!container) return;
+  const recent = (team.todos||[]).filter(t=>t.fromMeeting==='current');
+  if (!recent.length) {
+    container.innerHTML = '<div style="font-size:13px;color:#6c757d;padding:8px">No to-dos added this meeting yet.</div>';
+    return;
+  }
+  container.innerHTML = recent.map(t => {
+    const owner = team.members.find(m=>m.id===t.owner);
+    return `<div class="issue-card" style="margin-bottom:8px">
+      <div class="issue-text"><div style="font-weight:600">${escH(t.task)}</div></div>
+      ${owner?`<span class="badge badge-gray">${owner.name.split(' ')[0]}</span>`:''}
+      ${t.due?`<span class="badge badge-blue">${t.due}</span>`:''}
+    </div>`;
+  }).join('');
+}
+
+function toggleDiscussMeeting(id) {
+  currentDiscussingId = currentDiscussingId === id ? null : id;
+  renderMeetingContent();
+}
+
+function addIssueFromScorecard(metricId) {
+  const team = getTeam(); if (!team) return;
+  const m = team.metrics.find(x=>x.id===metricId); if (!m) return;
+  team.issues.push(touch({id:newId('iss'),text:'Metric off-track: '+m.name,who:m.owner||'',cat:'Data',solved:false,votesByMemberId:{},votes:0,isPrioritized:false,priorityRank:null,sourceType:'metric',sourceId:metricId,createdInMeetingId:ensureMeeting(),createdAt:nowIso()}));
+  saveData(); renderMeetingContent(); updateBadges();
+  showToast('Added to Issues List','success');
+}
+
+function tangentAlert(){
+  const text=prompt('Tangent! Describe it briefly to capture as an Issue:','Tangent: ');
+  if(!text||!text.trim()) return;
+  const team=getTeam(); if(!team) return;
+  const label=text.trim().startsWith('Tangent')?text.trim():'Tangent: '+text.trim();
+  team.issues.push(touch({id:newId('iss'),text:label,who:'',cat:'Tangent',
+    solved:false,votesByMemberId:{},votes:0,isPrioritized:false,priorityRank:null,
+    createdInMeetingId:ensureMeeting(),createdAt:nowIso()}));
+  saveData(); renderIssues(); updateBadges();
+  showToast('Tangent captured → Issues list','success');
+}
+
+function setAttendance(memberId, status) {
+  const team = getTeam(); if (!team) return;
+  if (!team.meetingAttendance) team.meetingAttendance = {};
+  team.meetingAttendance[memberId] = status;
+  saveData();
+}
+
+function addIssueFromRock(rockId) {
+  const team = getTeam(); if (!team) return;
+  const r = team.rocks.find(x=>x.id===rockId); if (!r) return;
+  team.issues.push(touch({id:newId('iss'),text:'Rock off-track: '+r.title,who:r.owner||'',cat:'People',solved:false,votesByMemberId:{},votes:0,isPrioritized:false,priorityRank:null,sourceType:'rock',sourceId:rockId,createdInMeetingId:ensureMeeting(),createdAt:nowIso()}));
+  saveData(); renderMeetingContent(); updateBadges();
+  showToast('Added to Issues List','success');
+}
+
+function addMeetingNote(){
+  const ta=document.getElementById('meetingNotes');
+  const text=(ta?ta.value:'').trim(); if(!text){ if(ta) ta.focus(); return; }
+  const team=getTeam(); if(!team) return;
+  if(!team.activeMeetingNotes) team.activeMeetingNotes=[];
+  team.activeMeetingNotes.push({id:newId('note'),text,createdAt:nowIso(),by:appData.currentUser});
+  if(ta) ta.value='';
+  saveData(); renderMeetingNotesList(); showToast('Note saved!','success');
+}
+function renderMeetingNotesList(){
+  const el=document.getElementById('meetingNotesList'); if(!el) return;
+  const team=getTeam(); const notes=(team&&team.activeMeetingNotes)||[];
+  el.innerHTML=notes.map(n=>`<div style="display:flex;gap:6px;align-items:flex-start;padding:7px 9px;background:#f8fafc;border-radius:7px;margin-bottom:5px;border:1px solid #e2e8f0">
+    <span style="flex:1;font-size:12px;color:#374151">${escH(n.text)}</span>
+    <span style="font-size:10px;color:#94a3b8;white-space:nowrap">${new Date(n.createdAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+    <button style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:13px;line-height:1;padding:0 2px" onclick="deleteMeetingNote('${n.id}')">×</button>
+  </div>`).join('');
+}
+function deleteMeetingNote(nid){
+  const team=getTeam(); if(!team) return;
+  team.activeMeetingNotes=(team.activeMeetingNotes||[]).filter(n=>n.id!==nid);
+  saveData(); renderMeetingNotesList();
+}
+
+function saveMemberRating(memberId, field, value) {
+  const team = getTeam(); if (!team) return;
+  if (!team.memberRatings) team.memberRatings = {};
+  if (!team.memberRatings[memberId]) team.memberRatings[memberId] = {score:8,reason:''};
+  team.memberRatings[memberId][field] = field==='score' ? parseInt(value)||8 : value;
+  saveData();
+  // Update avg display
+  const ratings = Object.values(team.memberRatings).map(r=>r.score||8);
+  const avg = ratings.length ? (ratings.reduce((a,b)=>a+b,0)/ratings.length).toFixed(1) : '—';
+  const el = document.getElementById('avgRatingDisplay');
+  if (el) el.textContent = avg + ' avg';
+}
+
+function saveMeetingRoles() {
+  const team = getTeam(); if (!team) return;
+  team.lastFacilitator = document.getElementById('facilitatorSelect').value;
+  team.lastScribe = document.getElementById('scribeSelect').value;
+  saveData();
+}
+
+function populateMeetingRoles() {
+  const team = getTeam(); if (!team) return;
+  const members = team.members || [];
+  ['facilitatorSelect','scribeSelect'].forEach(id => {
+    const sel = document.getElementById(id); if (!sel) return;
+    sel.innerHTML = '<option value="">— Select —</option>';
+    members.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+  });
+  if (team.lastFacilitator) document.getElementById('facilitatorSelect').value = team.lastFacilitator;
+  if (team.lastScribe) document.getElementById('scribeSelect').value = team.lastScribe;
+}
+
+function concludeMeeting(){
+  if(!timerState.meetingStarted&&!confirm('Conclude meeting without starting timer?')) return;
+  timerPause();
+  const team=getTeam(); if(!team) return;
+  const mid=timerState.meetingId||newId('mtg');
+
+  // P1.2 rating from per-member map
+  const ratingsByMemberId=team.memberRatings||{};
+  const scores=Object.values(ratingsByMemberId).map(r=>r.score||8);
+  const avgRating=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):
+    parseInt((document.getElementById('meetingRating')||{}).value||8);
+
+  const notes=((document.getElementById('meetingNotes')||{}).value||'').trim();
+  const recap=((document.getElementById('meetingRecap')||{}).value||'').trim();
+  const dur=timerState.meetingStartTime?Math.round((new Date()-timerState.meetingStartTime)/60000):90;
+
+  // P0.3 linkage
+  const solvedIssues=(team.issues||[]).filter(i=>i.solvedInMeetingId===mid);
+  const createdTodos=(team.todos||[]).filter(t=>t.createdInMeetingId===mid);
+  // fallback: catch legacy fromMeeting='current'
+  (team.todos||[]).filter(t=>t.fromMeeting==='current').forEach(t=>{
+    t.fromMeeting=new Date().toLocaleDateString(); t.createdInMeetingId=mid;
+  });
+
+  const histEntry={
+    id:mid, meetingId:mid, createdAt:nowIso(),
+    date:new Date().toISOString().split('T')[0],
+    startAt:timerState.meetingStartIso||nowIso(), endAt:nowIso(), duration:dur,
+    rating:avgRating, avgRating, ratingsByMemberId,
+    notes, recap,
+    ledBy:appData.currentUser,
+    facilitator:team.lastFacilitator?(team.members.find(m=>m.id===team.lastFacilitator)||{}).name:appData.currentUser,
+    scribe:team.lastScribe?(team.members.find(m=>m.id===team.lastScribe)||{}).name:'',
+    attendees:Object.entries(team.meetingAttendance||{}).filter(([,v])=>v!=='absent').map(([k])=>k),
+    issuesSolved:solvedIssues.length, issuesSolvedList:solvedIssues.map(i=>i.text), solvedIssueIds:solvedIssues.map(i=>i.id),
+    todosClosed:createdTodos.length, createdTodoIds:createdTodos.map(t=>t.id),
+    sectionTimes:timerState.actualTimes,
+    quarter:team.quarter, week:team.currentWeek,
+    meetingNotesList:team.activeMeetingNotes||[],
+  };
+  team.history.push(histEntry);
+
+  // cleanup
+  team.activeMeeting=null; team.activeMeetingNotes=[];
+  team.meetingAttendance={}; team.memberRatings={};
+  saveData();
+
+  timerState.meetingStarted=false; timerState.meetingId=null; timerState.meetingStartIso=null;
+  timerState.sectionIdx=0; timerState.secondsElapsed=0;
+  timerState.sectionSecondsLeft=AGENDA_SECTIONS[0].duration;
+  timerState.actualTimes=[]; timerState.meetingStartTime=null;
+
+  const cb=document.getElementById('concludeBtn'); if(cb) cb.style.display='none';
+  const cbar=document.getElementById('concludeBar'); if(cbar) cbar.style.display='none';
+  const dl=document.getElementById('meetingDateLabel'); if(dl) dl.textContent='Not started';
+  const mn=document.getElementById('meetingNotes'); if(mn) mn.value='';
+  const mr=document.getElementById('meetingRecap'); if(mr) mr.value='';
+  updateTimerUI(); renderSidebarAgenda(); renderMeetingContent();
+  renderHistory(); renderDashboard();
+  showToast('🎉 Meeting saved to history!','success');
+  showPage('history', document.querySelectorAll('.nav-btn')[7]);
+}
+
+// ==============================
+// MEMBERS / SETTINGS
+// ==============================
+function renderMembers() {
+  const team = getTeam(); if (!team) return;
+  const tbody = document.getElementById('membersBody');
+  tbody.innerHTML = '';
+  (team.members||[]).forEach(m => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="avatar" style="background:${m.color}">${initials(m.name)}</span> ${escH(m.name)}</td>
+      <td>${escH(m.role)}</td>
+      <td><span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:${m.color}"></span></td>
+      <td><button class="btn btn-xs btn-danger" onclick="deleteMember('${m.id}')">Remove</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function addTeamMember() {
+  const team = getTeam(); if (!team) return;
+  const name = document.getElementById('newMemberName').value.trim();
+  const role = document.getElementById('newMemberRole').value.trim();
+  const color = document.getElementById('newMemberColor').value;
+  if (!name) { showToast('Name required','warning'); return; }
+  team.members.push({id:'m_'+Date.now(), name, role, color});
+  document.getElementById('newMemberName').value='';
+  document.getElementById('newMemberRole').value='';
+  saveData(); renderMembers(); populateOwnerDropdowns();
+  renderRocks(); renderTodos();
+  showToast('Member added!','success');
+}
+
+function deleteMember(id) {
+  confirm2('Remove this team member?').then(ok => {
+    if (!ok) return;
+    const team = getTeam(); if (!team) return;
+    team.members = team.members.filter(m=>m.id!==id);
+    saveData(); renderMembers(); populateOwnerDropdowns();
+  });
+}
+
+function saveAllSettings() {
+  const team = getTeam(); if (!team) return;
+  team.company = document.getElementById('settingCompany').value.trim();
+  team.name = document.getElementById('settingTeam').value.trim();
+  team.meetingDay = document.getElementById('settingDay').value;
+  team.meetingTime = document.getElementById('settingTime').value;
+  team.quarter = document.getElementById('settingQuarter').value;
+  team.currentWeek = parseInt(document.getElementById('settingWeek').value)||3;
+  document.getElementById('headerTeamLabel').textContent = team.name + (team.company?' • '+team.company:'');
+  document.getElementById('scorecardWeekSelect').value = team.currentWeek;
+  saveData(); updateNextMeetingLabel(); renderAll();
+  showToast('Settings saved!','success');
+}
+
+function updateNextMeetingLabel() {
+  const team = getTeam(); if (!team) return;
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const target = days.indexOf(team.meetingDay||'Monday');
+  const now = new Date();
+  let next = new Date(now);
+  while (next.getDay()!==target) next.setDate(next.getDate()+1);
+  const [h,m] = (team.meetingTime||'09:00').split(':');
+  next.setHours(parseInt(h),parseInt(m),0,0);
+  if (next<=now) next.setDate(next.getDate()+7);
+  document.getElementById('headerMeetingNext').textContent = 'Next: ' + next.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ' at ' + next.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+}
+
+function handleLogoUpload(event) {
+  const file = event.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    // Store globally so ALL teams share one logo
+    appData.globalLogo = e.target.result;
+    applyLogo(e.target.result);
+    saveData();
+    showToast('Logo saved — applies to all teams!','success');
+  };
+  reader.readAsDataURL(file);
+}
+
+function applyLogo(src) {
+  const headerLogo = document.getElementById('headerLogo');
+  const preview = document.getElementById('logoPreview');
+  if (src) {
+    headerLogo.src = src; headerLogo.style.display = 'block';
+    preview.src = src; preview.style.display = 'block';
+  } else {
+    headerLogo.style.display = 'none';
+    preview.style.display = 'none';
+  }
+}
+
+// ==============================
+// POPULATE DROPDOWNS
+// ==============================
+function populateOwnerDropdowns() {
+  const team = getTeam(); if (!team) return;
+  const members = team.members||[];
+  const ddIds = ['issueWho','todoOwner','rockOwner','metricOwner','headlineWho','rocksFilterOwner','todosFilterOwner'];
+  ddIds.forEach(id => {
+    const el = document.getElementById(id); if (!el) return;
+    const val = el.value;
+    const isFilter = id.includes('Filter');
+    el.innerHTML = isFilter ? '<option value="">All Owners</option>' : '<option value="">— Select —</option>';
+    members.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.name;
+      el.appendChild(opt);
+    });
+    el.value = val;
+  });
+  populateMeetingRoles();
+}
+
+// ==============================
+// BADGES
+// ==============================
+function updateBadges() {
+  const team = getTeam(); if (!team) return;
+  const openIssues = (team.issues||[]).filter(i=>!i.solved).length;
+  const openTodos = (team.todos||[]).filter(t=>!t.done).length;
+  const ib = document.getElementById('issuesBadge');
+  const tb = document.getElementById('todosBadge');
+  ib.textContent = openIssues; ib.style.display = openIssues ? '' : 'none';
+  tb.textContent = openTodos; tb.style.display = openTodos ? '' : 'none';
+}
+
+// ==============================
+// MODAL HELPERS
+// ==============================
+function showModal(id) {
+  document.getElementById(id).style.display='flex';
+}
+function closeModal(id) {
+  document.getElementById(id).style.display='none';
+}
+function closeModalOnBg(e, id) {
+  if (e.target.id===id) closeModal(id);
+}
+
+let _confirmResolve = null;
+function confirm2(msg, icon='⚠️') {
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    document.getElementById('confirmMsg').textContent = msg;
+    document.getElementById('confirmIcon').textContent = icon;
+    document.getElementById('confirmModal').style.display='flex';
+  });
+}
+function resolveConfirm(val) {
+  document.getElementById('confirmModal').style.display='none';
+  if (_confirmResolve) { _confirmResolve(val); _confirmResolve=null; }
+}
+
+// ==============================
+// TOAST
+// ==============================
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (type?' '+type:'');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 3000);
+}
+
+// ==============================
+// EXPORT / IMPORT
+// ==============================
+function exportData() {
+  const json = JSON.stringify(appData, null, 2);
+  downloadFile(json, 'eos_l10_data.json', 'application/json');
+  showToast('Data exported!','success');
+}
+
+function importData(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const imported = JSON.parse(ev.target.result);
+      if (imported.teams) {
+        appData = imported;
+        saveData();
+        showToast('Data imported! Refreshing...','success');
+        setTimeout(()=>location.reload(), 1200);
+      } else { showToast('Invalid data file','warning'); }
+    } catch { showToast('Could not parse file','warning'); }
+  };
+  reader.readAsText(file);
+}
+
+function resetAllData() {
+  confirm2('Reset ALL data? This cannot be undone!', '🗑️').then(ok => {
+    if (!ok) return;
+    localStorage.removeItem('eos_l10_v2');
+    location.reload();
+  });
+}
+
+function downloadFile(content, filename, mimeType) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type: mimeType}));
+  a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ==============================
+// UTILITIES
+// ==============================
+function formatTime(sec) {
+  const neg=sec<0; const a=Math.abs(Math.round(sec));
+  const h=Math.floor(a/3600), m=Math.floor((a%3600)/60), s=a%60;
+  const mm=String(m).padStart(2,'0'), ss=String(s).padStart(2,'0');
+  return (neg?'-':'')+(h>0?String(h).padStart(2,'0')+':':'')+mm+':'+ss;
+}
+
+// Fix 3: score input helpers
+function scoreInputBlur(el) {
+  el.dataset.focused = '';
+  const raw = el.value.replace(/[$,%]/g, '').trim();
+  el.dataset.raw = raw;
+  el.value = raw !== '' ? formatMetricVal(raw, el.dataset.fmt) : '';
+}
+function scoreInputChange(el) {
+  const raw = el.value.replace(/[$,%]/g, '').trim();
+  el.dataset.raw = raw;
+  updateScore(el.dataset.metric, parseInt(el.dataset.week), raw);
+}
+
+function formatMetricVal(val, format) {
+  const n = parseFloat(val);
+  if (isNaN(n)) return val;
+  switch(format) {
+    case 'dollar': return '$' + n.toLocaleString();
+    case 'percent': return n + '%';
+    case 'decimal': return n.toFixed(1);
+    default: return n.toLocaleString();
+  }
+}
+
+function initials(name) {
+  return (name||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+}
+
+function escH(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ==============================
+// INIT
+// ==============================
+loadData();
+
+// If we have a saved session, auto-login
+if (appData.currentUser && appData.currentTeamId && appData.teams[appData.currentTeamId]) {
+  launchApp();
+} else {
+  buildLoginUI();
+}
+
+// Set today's date in headline modal
+document.getElementById('headlineDate').value = new Date().toISOString().split('T')[0];
+
+// Meeting display is initialized inside launchApp() via renderAll()
+
+// Fix6: info popups
+const INFO_CONTENT = {
+  tangent: {
+    title: '⚡ What is a Tangent?',
+    bullets: [
+      'A tangent is off-topic discussion that steals time from your 90-minute meeting.',
+      "If it matters, capture it as an Issue and handle it properly during IDS.",
+      "If it doesn't matter, park it and move on.",
+      'The goal: keep Scorecard/Rocks/Headlines/To-Dos moving at pace.',
+    ]
+  },
+  raiseissue: {
+    title: '📋 What does Raise Issue do?',
+    bullets: [
+      'Captures an off-track item directly into your Issues list.',
+      "Discuss it later during IDS — don't derail the current section.",
+      'Keeps the meeting flowing: identify now, solve later.',
+      'The issue is tagged with its source (metric, rock, to-do, or headline) for context.',
+    ]
+  }
+};
+function showInfoPopup(key) {
+  const data = INFO_CONTENT[key]; if(!data) return;
+  const existing = document.getElementById('infoPopupOverlay');
+  if(existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'infoPopupOverlay';
+  el.className = 'info-popup';
+  el.onclick = (e) => { if(e.target===el) el.remove(); };
+  el.innerHTML = `<div class="info-popup-box">
+    <button class="info-popup-close" onclick="document.getElementById('infoPopupOverlay').remove()">×</button>
+    <div class="info-popup-title">${data.title}</div>
+    <ul class="info-popup-list">${data.bullets.map(b=>`<li>• ${b}</li>`).join('')}</ul>
+  </div>`;
+  document.body.appendChild(el);
+}
+</script>
+</body>
+</html>
